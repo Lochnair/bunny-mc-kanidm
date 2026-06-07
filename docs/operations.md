@@ -14,9 +14,37 @@ To publish manually, run the `Build images` workflow with `workflow_dispatch`.
 
 ## Logs
 
-Bunny Magic Containers should be operated through Bunny logs, log forwarding, or syslog. Do not assume interactive shell access. Treat logs as sensitive during recovery modes because Kanidm can print recovery passwords.
+Bunny Magic Containers should be operated through Bunny logs, log forwarding, syslog, and the tailnet-only ops API. Do not assume interactive shell access. Treat logs and ops API recovery responses as sensitive because Kanidm can print recovery passwords.
 
 Check that config generation did not print secrets by searching logs for placeholder markers and known secret prefixes. The wrappers print whether values are set, not their contents. Replication certificates are less sensitive than passwords, but recovery account output is sensitive.
+
+## Ops API
+
+The `kanidm-bunny` container always starts a localhost-only ops API on `OPS_BINDADDRESS`, default `127.0.0.1:9080`. Expose it only with Tailscale Serve:
+
+```sh
+TS_OPS_SERVE_PORT=9080
+TS_OPS_SERVE_TARGET=127.0.0.1:9080
+```
+
+Do not expose the ops API through Bunny public HTTP/CDN endpoints. `OPS_ADMIN_TOKEN` is required for mutating endpoints and is defense-in-depth in addition to Tailscale ACLs. Account recovery also requires `OPS_ENABLE_RECOVERY=true`.
+
+From a tailnet admin machine:
+
+```sh
+curl http://kanidm-sg.nessie-monster.ts.net:9080/healthz
+curl http://kanidm-sg.nessie-monster.ts.net:9080/replication/certificate
+curl -X POST \
+  -H "Authorization: Bearer ${OPS_ADMIN_TOKEN}" \
+  http://kanidm-sg.nessie-monster.ts.net:9080/replication/refresh-consumer
+curl -X POST \
+  -H "Authorization: Bearer ${OPS_ADMIN_TOKEN}" \
+  -H "Content-Type: application/json" \
+  -d '{"account":"admin"}' \
+  http://kanidm-sg.nessie-monster.ts.net:9080/account/recover
+```
+
+Recovery responses may contain temporary credentials. Enable `OPS_ENABLE_RECOVERY=true` only while recovery is needed, then set it back to false.
 
 ## Temporary LDAPS Through Tailscale
 
@@ -61,8 +89,9 @@ socat signs of health:
 Kanidm signs of health:
 
 ```text
-[kanidm-bunny] Running kanidmd configtest
-[kanidm-bunny] Starting kanidmd server
+[kanidm-config] Running kanidmd configtest -c /data/server.toml
+[kanidm-server] Starting kanidmd server
+[kanidm-ops-api] listening on 127.0.0.1:9080
 ```
 
 ## Test The Forwarding Path

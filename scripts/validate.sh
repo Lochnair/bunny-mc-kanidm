@@ -15,7 +15,15 @@ fail() {
 run_sh_syntax() {
   log "Checking shell syntax"
   for script in \
-    images/kanidm-bunny/entrypoint.sh \
+    images/kanidm-bunny/rootfs/usr/local/bin/generate-kanidm-config \
+    images/kanidm-bunny/rootfs/usr/local/bin/run-kanidm-config \
+    images/kanidm-bunny/rootfs/usr/local/bin/run-kanidm-server \
+    images/kanidm-bunny/rootfs/usr/local/bin/run-kanidm-ops-api \
+    images/kanidm-bunny/rootfs/usr/local/bin/finish-kanidm-server \
+    images/kanidm-bunny/rootfs/etc/s6-overlay/s6-rc.d/kanidm-config/up \
+    images/kanidm-bunny/rootfs/etc/s6-overlay/s6-rc.d/kanidm-server/run \
+    images/kanidm-bunny/rootfs/etc/s6-overlay/s6-rc.d/kanidm-server/finish \
+    images/kanidm-bunny/rootfs/etc/s6-overlay/s6-rc.d/kanidm-ops-api/run \
     images/tailscale-sidecar/entrypoint.sh \
     images/socat-forwarder/entrypoint.sh \
     scripts/build-all.sh \
@@ -33,7 +41,15 @@ run_shellcheck() {
 
   log "Running shellcheck"
   shellcheck \
-    images/kanidm-bunny/entrypoint.sh \
+    images/kanidm-bunny/rootfs/usr/local/bin/generate-kanidm-config \
+    images/kanidm-bunny/rootfs/usr/local/bin/run-kanidm-config \
+    images/kanidm-bunny/rootfs/usr/local/bin/run-kanidm-server \
+    images/kanidm-bunny/rootfs/usr/local/bin/run-kanidm-ops-api \
+    images/kanidm-bunny/rootfs/usr/local/bin/finish-kanidm-server \
+    images/kanidm-bunny/rootfs/etc/s6-overlay/s6-rc.d/kanidm-config/up \
+    images/kanidm-bunny/rootfs/etc/s6-overlay/s6-rc.d/kanidm-server/run \
+    images/kanidm-bunny/rootfs/etc/s6-overlay/s6-rc.d/kanidm-server/finish \
+    images/kanidm-bunny/rootfs/etc/s6-overlay/s6-rc.d/kanidm-ops-api/run \
     images/tailscale-sidecar/entrypoint.sh \
     images/socat-forwarder/entrypoint.sh \
     scripts/build-all.sh \
@@ -72,10 +88,65 @@ validate_github_actions_yaml() {
     || fail "python yaml could not parse GitHub Actions workflows"
 }
 
+run_go_tests() {
+  if ! command -v go >/dev/null 2>&1; then
+    log "Skipping Go tests; go command not found"
+    return 0
+  fi
+
+  log "Running Go tests for kanidm ops API"
+  (cd images/kanidm-bunny/ops-api && GOCACHE="${GOCACHE:-/tmp/bunny-kanidm-go-cache}" go test ./...) \
+    || fail "go test failed for kanidm ops API"
+}
+
+validate_s6_layout() {
+  log "Checking s6 service layout"
+
+  for path in \
+    images/kanidm-bunny/rootfs/etc/s6-overlay/s6-rc.d/kanidm-config/type \
+    images/kanidm-bunny/rootfs/etc/s6-overlay/s6-rc.d/kanidm-config/up \
+    images/kanidm-bunny/rootfs/etc/s6-overlay/s6-rc.d/kanidm-server/type \
+    images/kanidm-bunny/rootfs/etc/s6-overlay/s6-rc.d/kanidm-server/run \
+    images/kanidm-bunny/rootfs/etc/s6-overlay/s6-rc.d/kanidm-server/finish \
+    images/kanidm-bunny/rootfs/etc/s6-overlay/s6-rc.d/kanidm-server/dependencies.d/kanidm-config \
+    images/kanidm-bunny/rootfs/etc/s6-overlay/s6-rc.d/kanidm-ops-api/type \
+    images/kanidm-bunny/rootfs/etc/s6-overlay/s6-rc.d/kanidm-ops-api/run \
+    images/kanidm-bunny/rootfs/etc/s6-overlay/s6-rc.d/kanidm-ops-api/dependencies.d/kanidm-config \
+    images/kanidm-bunny/rootfs/etc/s6-overlay/s6-rc.d/user/contents.d/kanidm-config \
+    images/kanidm-bunny/rootfs/etc/s6-overlay/s6-rc.d/user/contents.d/kanidm-server \
+    images/kanidm-bunny/rootfs/etc/s6-overlay/s6-rc.d/user/contents.d/kanidm-ops-api
+  do
+    [ -e "$path" ] || fail "missing s6 file $path"
+  done
+
+  for path in \
+    images/kanidm-bunny/rootfs/usr/local/bin/generate-kanidm-config \
+    images/kanidm-bunny/rootfs/usr/local/bin/run-kanidm-config \
+    images/kanidm-bunny/rootfs/usr/local/bin/run-kanidm-server \
+    images/kanidm-bunny/rootfs/usr/local/bin/run-kanidm-ops-api \
+    images/kanidm-bunny/rootfs/usr/local/bin/finish-kanidm-server \
+    images/kanidm-bunny/rootfs/etc/s6-overlay/s6-rc.d/kanidm-config/up \
+    images/kanidm-bunny/rootfs/etc/s6-overlay/s6-rc.d/kanidm-server/run \
+    images/kanidm-bunny/rootfs/etc/s6-overlay/s6-rc.d/kanidm-server/finish \
+    images/kanidm-bunny/rootfs/etc/s6-overlay/s6-rc.d/kanidm-ops-api/run
+  do
+    [ -x "$path" ] || fail "not executable: $path"
+  done
+
+  grep -qx 'oneshot' images/kanidm-bunny/rootfs/etc/s6-overlay/s6-rc.d/kanidm-config/type \
+    || fail "kanidm-config must be oneshot"
+  grep -qx 'longrun' images/kanidm-bunny/rootfs/etc/s6-overlay/s6-rc.d/kanidm-server/type \
+    || fail "kanidm-server must be longrun"
+  grep -qx 'longrun' images/kanidm-bunny/rootfs/etc/s6-overlay/s6-rc.d/kanidm-ops-api/type \
+    || fail "kanidm-ops-api must be longrun"
+}
+
 run_sh_syntax
 run_shellcheck
 validate_renovate_json
 validate_github_actions_yaml
+run_go_tests
+validate_s6_layout
 
 if [ "$failures" -ne 0 ]; then
   fail "$failures validation check(s) failed"

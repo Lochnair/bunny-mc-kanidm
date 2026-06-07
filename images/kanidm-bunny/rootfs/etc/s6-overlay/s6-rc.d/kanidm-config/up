@@ -1,0 +1,2 @@
+#!/bin/sh
+exec /command/with-contenv /usr/local/bin/run-kanidm-config

@@ -1,10 +1,17 @@
 # Kanidm Bootstrap
 
-Bunny has no reliable `docker exec` style operational path for Magic Containers. The `kanidm-bunny` image has helper modes so one-off Kanidm commands can be run by changing environment variables and restarting/redeploying the container.
+Bunny has no useful `docker exec` style operational path for Magic Containers. The `kanidm-bunny` image therefore runs Kanidm under s6-overlay and starts a localhost-only ops API as a normal operational interface.
 
-Recovery passwords and some Kanidm command outputs can appear in logs. Treat Bunny logs and log forwarding destinations as sensitive during bootstrap and recovery.
+Expose the ops API only through Tailscale Serve:
 
-Helper modes generate `/data/server.toml` and run Kanidm commands against that config. In `kanidm/server:1.10.3`, these forms were verified inside the built `kanidm-bunny` image:
+```sh
+TS_OPS_SERVE_PORT=9080
+TS_OPS_SERVE_TARGET=127.0.0.1:9080
+```
+
+Never expose the ops API through Bunny public HTTP/CDN endpoints. Mutating endpoints require `Authorization: Bearer <OPS_ADMIN_TOKEN>`. Account recovery also requires `OPS_ENABLE_RECOVERY=true`.
+
+In `kanidm/server:1.10.3`, these helper command forms were verified inside the built `kanidm-bunny` image and are used by the ops API:
 
 ```sh
 kanidmd show-replication-certificate -c /data/server.toml
@@ -24,12 +31,13 @@ KANIDM_REPL_ORIGIN=repl://kanidm-ams.nessie-monster.ts.net:8444
 KANIDM_REPL_BINDADDRESS=127.0.0.1:8444
 KANIDM_REPL_PEER_URL=
 KANIDM_REPL_PEER_CERT_B64=
+OPS_ADMIN_TOKEN=<long-random-token>
 ```
 
-2. Show the AMS replication certificate.
+2. Show the AMS replication certificate from a tailnet admin machine.
 
 ```sh
-KANIDM_MODE=show-replication-certificate
+curl http://kanidm-ams.nessie-monster.ts.net:9080/replication/certificate
 ```
 
 3. Start SG with the AMS certificate and automatic refresh enabled.
@@ -41,6 +49,7 @@ KANIDM_REPL_BINDADDRESS=127.0.0.1:8444
 KANIDM_REPL_PEER_URL=repl://127.0.0.1:18444
 KANIDM_REPL_PEER_CERT_B64=<base64-of-ams-replication-cert-value>
 KANIDM_REPL_AUTOMATIC_REFRESH=true
+OPS_ADMIN_TOKEN=<long-random-token>
 ```
 
 `KANIDM_REPL_PEER_CERT` must contain only the certificate string value, not the full `certificate: "..."` output line. `KANIDM_REPL_PEER_CERT_B64` must be base64 of only that certificate string value.
@@ -50,7 +59,7 @@ The peer URL currently points to the local forwarder: `repl://127.0.0.1:18444`. 
 4. Show the SG replication certificate.
 
 ```sh
-KANIDM_MODE=show-replication-certificate
+curl http://kanidm-sg.nessie-monster.ts.net:9080/replication/certificate
 ```
 
 5. Update AMS with the SG certificate and no automatic refresh.
@@ -60,40 +69,26 @@ KANIDM_REPL_PEER_URL=repl://127.0.0.1:18444
 KANIDM_REPL_PEER_CERT_B64=<base64-of-sg-replication-cert-value>
 ```
 
-Leave `KANIDM_REPL_AUTOMATIC_REFRESH` unset or false on the primary. The wrapper only writes `automatic_refresh = true` when `KANIDM_REPL_AUTOMATIC_REFRESH=true`; it omits the key otherwise.
+Leave `KANIDM_REPL_AUTOMATIC_REFRESH` unset or false on the primary. The config generator only writes `automatic_refresh = true` when `KANIDM_REPL_AUTOMATIC_REFRESH=true`; it omits the key otherwise.
 
-6. Restart both regions in `server` mode.
-
-```sh
-KANIDM_MODE=server
-```
-
-7. If SG does not automatically refresh from AMS, temporarily run:
+6. If SG does not automatically refresh from AMS, call the refresh endpoint.
 
 ```sh
-KANIDM_MODE=refresh-replication-consumer
-```
-
-Then return to:
-
-```sh
-KANIDM_MODE=server
+curl -X POST \
+  -H "Authorization: Bearer ${OPS_ADMIN_TOKEN}" \
+  http://kanidm-sg.nessie-monster.ts.net:9080/replication/refresh-consumer
 ```
 
 ## Account Recovery
 
-Use only when needed. The generated recovery password will appear in logs.
+Use only when needed. Recovery output may include temporary credentials.
 
 ```sh
-KANIDM_MODE=recover-account
-KANIDM_RECOVER_ACCOUNT=admin
+curl -X POST \
+  -H "Authorization: Bearer ${OPS_ADMIN_TOKEN}" \
+  -H "Content-Type: application/json" \
+  -d '{"account":"admin"}' \
+  http://kanidm-sg.nessie-monster.ts.net:9080/account/recover
 ```
 
-or:
-
-```sh
-KANIDM_MODE=recover-account
-KANIDM_RECOVER_ACCOUNT=idm_admin
-```
-
-Return to `KANIDM_MODE=server` immediately after recovery.
+Set `OPS_ENABLE_RECOVERY=true` only while using the recovery endpoint, then set it back to false.

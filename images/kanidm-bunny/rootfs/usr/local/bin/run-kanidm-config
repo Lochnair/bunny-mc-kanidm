@@ -1,0 +1,12 @@
+#!/bin/sh
+set -eu
+
+CONFIG_PATH="${CONFIG_PATH:-/data/server.toml}"
+export LD_LIBRARY_PATH="${LD_LIBRARY_PATH:-/lib}"
+export PATH="${PATH:-/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin}"
+
+printf '[kanidm-config] Starting config generation and configtest\n'
+/usr/local/bin/generate-kanidm-config
+printf '[kanidm-config] Running kanidmd configtest -c %s\n' "$CONFIG_PATH"
+kanidmd configtest -c "$CONFIG_PATH"
+printf '[kanidm-config] Config generation and configtest completed\n'

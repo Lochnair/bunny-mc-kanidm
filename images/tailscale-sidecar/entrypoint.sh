@@ -69,7 +69,14 @@ REGION="$(printf '%s' "$REGION_RAW" | tr '[:upper:]' '[:lower:]')"
 : "${TS_HOSTNAME:=kanidm-${REGION}}"
 : "${TS_SERVE_PORT:=8444}"
 : "${TS_SERVE_TARGET:=127.0.0.1:8444}"
+: "${TS_OPS_SERVE_PORT:=}"
 : "${TS_LDAP_SERVE_PORT:=}"
+
+if [ -n "$TS_OPS_SERVE_PORT" ]; then
+  : "${TS_OPS_SERVE_TARGET:=127.0.0.1:9080}"
+else
+  : "${TS_OPS_SERVE_TARGET:=}"
+fi
 
 if [ -n "$TS_LDAP_SERVE_PORT" ]; then
   : "${TS_LDAP_SERVE_TARGET:=127.0.0.1:3636}"
@@ -87,6 +94,7 @@ log "state_dir=${TS_STATE_DIR}"
 log "socket=${TS_SOCKET}"
 log "socks5=${TS_SOCKS5_SERVER}"
 log "serve_replication=${TS_SERVE_PORT:-disabled} -> ${TS_SERVE_TARGET:-disabled}"
+log "serve_ops=${TS_OPS_SERVE_PORT:-disabled} -> ${TS_OPS_SERVE_TARGET:-disabled}"
 log "serve_ldaps=${TS_LDAP_SERVE_PORT:-disabled} -> ${TS_LDAP_SERVE_TARGET:-disabled}"
 log "authkey=$(redact_state "${TS_AUTHKEY:-}")"
 log "extra_args=${TS_EXTRA_ARGS}"
@@ -134,6 +142,7 @@ tailscale --socket="$TS_SOCKET" wait --timeout="$TS_WAIT_TIMEOUT"
 wait_for_tcp "$SOCKS_HOST" "$SOCKS_PORT" "$TS_SOCKS_WAIT_SECONDS" "SOCKS5 listener"
 
 serve_tcp "$TS_SERVE_PORT" "$TS_SERVE_TARGET" "replication"
+serve_tcp "$TS_OPS_SERVE_PORT" "$TS_OPS_SERVE_TARGET" "ops-api"
 serve_tcp "$TS_LDAP_SERVE_PORT" "$TS_LDAP_SERVE_TARGET" "ldaps"
 
 log "Tailscale status:"

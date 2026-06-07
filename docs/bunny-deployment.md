@@ -21,6 +21,7 @@ Containers in the same Bunny app share localhost and the network namespace, so p
 
 - Kanidm HTTPS: `0.0.0.0:8443`
 - Kanidm replication listener: `127.0.0.1:8444`
+- Kanidm ops API: `127.0.0.1:9080`
 - Tailscale SOCKS5: `127.0.0.1:1055`
 - socat replication forwarder: `127.0.0.1:18444`
 - Optional LDAPS: `127.0.0.1:3636`
@@ -41,6 +42,7 @@ KANIDM_REPL_BINDADDRESS=127.0.0.1:8444
 KANIDM_REPL_PEER_URL=repl://127.0.0.1:18444
 KANIDM_REPL_PEER_CERT_B64=<base64-of-ams-replication-cert-value>
 KANIDM_REPL_AUTOMATIC_REFRESH=true
+OPS_ADMIN_TOKEN=<long-random-token>
 ```
 
 `tailscale-sidecar`:
@@ -51,6 +53,8 @@ TS_AUTHKEY=<tskey-auth-placeholder>
 TS_EXTRA_ARGS=--accept-dns=true --advertise-tags=tag:kanidm
 TS_SERVE_PORT=8444
 TS_SERVE_TARGET=127.0.0.1:8444
+TS_OPS_SERVE_PORT=9080
+TS_OPS_SERVE_TARGET=127.0.0.1:9080
 ```
 
 `socat-forwarder`:
@@ -77,6 +81,7 @@ KANIDM_REPL_ORIGIN=repl://kanidm-ams.nessie-monster.ts.net:8444
 KANIDM_REPL_BINDADDRESS=127.0.0.1:8444
 KANIDM_REPL_PEER_URL=repl://127.0.0.1:18444
 KANIDM_REPL_PEER_CERT_B64=<base64-of-sg-replication-cert-value>
+OPS_ADMIN_TOKEN=<long-random-token>
 ```
 
 `tailscale-sidecar`:
@@ -87,6 +92,8 @@ TS_AUTHKEY=<tskey-auth-placeholder>
 TS_EXTRA_ARGS=--accept-dns=true --advertise-tags=tag:kanidm
 TS_SERVE_PORT=8444
 TS_SERVE_TARGET=127.0.0.1:8444
+TS_OPS_SERVE_PORT=9080
+TS_OPS_SERVE_TARGET=127.0.0.1:9080
 ```
 
 `socat-forwarder`:
@@ -110,6 +117,17 @@ KANIDM_REPL_ORIGIN=repl://kanidm-se.nessie-monster.ts.net:8444
 ```
 
 Use explicit `FORWARD_TARGET_HOST` when a region should replicate from a peer other than the built-in default.
+
+## Ops API Exposure
+
+The `kanidm-bunny` image starts the ops API as a normal supervised service on `OPS_BINDADDRESS`, default `127.0.0.1:9080`. Keep it loopback-only in the Kanidm container and expose it only through the existing `tailscale-sidecar` with:
+
+```sh
+TS_OPS_SERVE_PORT=9080
+TS_OPS_SERVE_TARGET=127.0.0.1:9080
+```
+
+Do not configure Bunny public HTTP/CDN endpoints for the ops API port. Mutating endpoints still require `Authorization: Bearer <OPS_ADMIN_TOKEN>`; Tailscale ACLs are the outer access-control layer.
 
 ## Replication Peer URL Validation
 

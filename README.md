@@ -4,7 +4,7 @@ Production-oriented container images for running Kanidm on Bunny.net Magic Conta
 
 This repository builds three linux/amd64 images:
 
-- `kanidm-bunny`: Kanidm server wrapper that generates `/data/server.toml` from environment variables and uses `/data` as the persistent volume.
+- `kanidm-bunny`: s6-overlay supervised Kanidm server that generates `/data/server.toml`, runs configtest before startup, and exposes a localhost-only ops API on `127.0.0.1:9080`.
 - `tailscale-sidecar`: Tailscale userspace sidecar with SOCKS5 and `tailscale serve` for replication traffic.
 - `socat-forwarder`: Local TCP listener that forwards Kanidm replication through the Tailscale SOCKS5 proxy.
 
@@ -19,6 +19,8 @@ Kanidm -> localhost:18444 -> socat -> Tailscale SOCKS5 127.0.0.1:1055 -> peer Ma
 ```
 
 Optional LDAPS can later be exposed privately with `tailscale serve` to `127.0.0.1:3636`. Public LDAPS would require raw TCP exposure unless clients are on Tailscale or behind another TCP proxy.
+
+Kanidm operations use the built-in ops API through Tailscale Serve only. Do not expose `127.0.0.1:9080` through Bunny public HTTP/CDN endpoints.
 
 Kanidm `domain` and `origin` must remain the public identity domain, for example `idm.svee.eu` and `https://idm.svee.eu`. Do not set them to Tailscale names. Replication has its own `repl://kanidm-sg.nessie-monster.ts.net:8444` style origin.
 

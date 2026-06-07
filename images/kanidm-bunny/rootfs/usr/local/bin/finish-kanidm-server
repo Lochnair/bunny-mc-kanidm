@@ -1,0 +1,4 @@
+#!/bin/sh
+
+printf '[kanidm-server] kanidmd exited with status %s; stopping container\n' "$1" >&2
+exec /run/s6/basedir/bin/halt "$1"
