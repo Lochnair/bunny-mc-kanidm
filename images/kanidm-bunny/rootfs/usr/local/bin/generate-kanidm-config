@@ -20,6 +20,39 @@ is_true() {
   esac
 }
 
+env_is_set() {
+  eval "[ \"\${$1+x}\" = x ]"
+}
+
+env_get() {
+  eval "RESOLVED_VALUE=\${$1-}"
+}
+
+resolve_env() {
+  base="$1"
+  default="$2"
+  secret="${3:-false}"
+
+  for candidate in "${base}_${REGION_UPPER}" "${base}_${REGION_LOWER}" "$base"; do
+    if env_is_set "$candidate"; then
+      env_get "$candidate"
+      if is_true "$secret"; then
+        if [ -n "$RESOLVED_VALUE" ]; then
+          log "${base}: selected ${candidate}; value present"
+        else
+          log "${base}: selected ${candidate}; value empty"
+        fi
+      else
+        log "${base}: selected ${candidate}"
+      fi
+      return 0
+    fi
+  done
+
+  RESOLVED_VALUE="$default"
+  log "${base}: no region/global override selected; using default"
+}
+
 toml_escape() {
   printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'
 }
@@ -72,27 +105,41 @@ write_trusted_section() {
 
 : "${KANIDM_DOMAIN:=idm.svee.eu}"
 : "${KANIDM_ORIGIN:=https://idm.svee.eu}"
-: "${KANIDM_BINDADDRESS:=0.0.0.0:8443}"
 : "${KANIDM_DB_PATH:=/data/kanidm.db}"
 : "${KANIDM_TLS_CHAIN:=/data/chain.pem}"
 : "${KANIDM_TLS_KEY:=/data/key.pem}"
 : "${KANIDM_ONLINE_BACKUP_PATH:=/data/kanidm/backups/}"
 : "${KANIDM_ONLINE_BACKUP_SCHEDULE:=00 22 * * *}"
 : "${KANIDM_REPL_ENABLED:=false}"
-: "${KANIDM_REPL_ORIGIN:=}"
-: "${KANIDM_REPL_BINDADDRESS:=127.0.0.1:8444}"
-: "${KANIDM_REPL_PEER_URL:=}"
-: "${KANIDM_REPL_PEER_CERT:=}"
-: "${KANIDM_REPL_PEER_CERT_B64:=}"
-: "${KANIDM_REPL_AUTOMATIC_REFRESH:=false}"
 : "${KANIDM_LDAP_ENABLED:=false}"
-: "${KANIDM_LDAP_BINDADDRESS:=127.0.0.1:3636}"
 : "${KANIDM_HTTP_CLIENT_ADDRESS_INFO_MODE:=}"
 : "${KANIDM_HTTP_CLIENT_ADDRESS_INFO_TRUSTED:=}"
 : "${KANIDM_LDAP_CLIENT_ADDRESS_INFO_MODE:=}"
 : "${KANIDM_LDAP_CLIENT_ADDRESS_INFO_TRUSTED:=}"
 
+REGION_RAW="${BUNNYNET_MC_REGION:-unknown}"
+REGION_LOWER="$(printf '%s' "$REGION_RAW" | tr '[:upper:]' '[:lower:]')"
+REGION_UPPER="$(printf '%s' "$REGION_RAW" | tr '[:lower:]' '[:upper:]')"
+
+resolve_env KANIDM_BINDADDRESS "0.0.0.0:8443"
+KANIDM_BINDADDRESS="$RESOLVED_VALUE"
+resolve_env KANIDM_LDAP_BINDADDRESS "127.0.0.1:3636"
+KANIDM_LDAP_BINDADDRESS="$RESOLVED_VALUE"
+resolve_env KANIDM_REPL_ORIGIN ""
+KANIDM_REPL_ORIGIN="$RESOLVED_VALUE"
+resolve_env KANIDM_REPL_BINDADDRESS "127.0.0.1:8444"
+KANIDM_REPL_BINDADDRESS="$RESOLVED_VALUE"
+resolve_env KANIDM_REPL_PEER_URL ""
+KANIDM_REPL_PEER_URL="$RESOLVED_VALUE"
+resolve_env KANIDM_REPL_PEER_CERT "" true
+KANIDM_REPL_PEER_CERT="$RESOLVED_VALUE"
+resolve_env KANIDM_REPL_PEER_CERT_B64 "" true
+KANIDM_REPL_PEER_CERT_B64="$RESOLVED_VALUE"
+resolve_env KANIDM_REPL_AUTOMATIC_REFRESH "false"
+KANIDM_REPL_AUTOMATIC_REFRESH="$RESOLVED_VALUE"
+
 log "Generating ${CONFIG_PATH} from environment"
+log "region=${REGION_RAW}"
 log "domain=${KANIDM_DOMAIN}"
 log "origin=${KANIDM_ORIGIN}"
 log "bindaddress=${KANIDM_BINDADDRESS}"

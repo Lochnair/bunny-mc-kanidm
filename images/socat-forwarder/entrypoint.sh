@@ -10,6 +10,32 @@ die() {
   exit 1
 }
 
+env_is_set() {
+  eval "[ \"\${$1+x}\" = x ]"
+}
+
+env_get() {
+  eval "RESOLVED_VALUE=\${$1-}"
+}
+
+resolve_env() {
+  base="$1"
+  default="$2"
+
+  RESOLVED_SOURCE=""
+  for candidate in "${base}_${REGION_UPPER}" "${base}_${REGION_LOWER}" "$base"; do
+    if env_is_set "$candidate"; then
+      env_get "$candidate"
+      RESOLVED_SOURCE="$candidate"
+      log "${base}: selected ${candidate}"
+      return 0
+    fi
+  done
+
+  RESOLVED_VALUE="$default"
+  log "${base}: no region/global override selected; using default"
+}
+
 wait_for_tcp() {
   host="$1"
   port="$2"
@@ -26,18 +52,28 @@ wait_for_tcp() {
 }
 
 REGION_RAW="${BUNNYNET_MC_REGION:-unknown}"
-REGION="$(printf '%s' "$REGION_RAW" | tr '[:upper:]' '[:lower:]')"
+REGION_LOWER="$(printf '%s' "$REGION_RAW" | tr '[:upper:]' '[:lower:]')"
+REGION_UPPER="$(printf '%s' "$REGION_RAW" | tr '[:lower:]' '[:upper:]')"
 
-: "${SOCKS5_PROXY_HOST:=127.0.0.1}"
-: "${SOCKS5_PROXY_PORT:=1055}"
-: "${FORWARD_LISTEN_HOST:=127.0.0.1}"
-: "${FORWARD_LISTEN_PORT:=18444}"
-: "${FORWARD_TARGET_PORT:=8444}"
 : "${TAILNET_DNS_NAME:=nessie-monster.ts.net}"
 : "${FORWARD_START_DELAY_SECONDS:=0}"
 : "${SOCKS_WAIT_SECONDS:=60}"
 
-case "$REGION" in
+resolve_env SOCKS5_PROXY_HOST "127.0.0.1"
+SOCKS5_PROXY_HOST="$RESOLVED_VALUE"
+resolve_env SOCKS5_PROXY_PORT "1055"
+SOCKS5_PROXY_PORT="$RESOLVED_VALUE"
+resolve_env FORWARD_LISTEN_HOST "127.0.0.1"
+FORWARD_LISTEN_HOST="$RESOLVED_VALUE"
+resolve_env FORWARD_LISTEN_PORT "18444"
+FORWARD_LISTEN_PORT="$RESOLVED_VALUE"
+resolve_env FORWARD_TARGET_PORT "8444"
+FORWARD_TARGET_PORT="$RESOLVED_VALUE"
+resolve_env FORWARD_TARGET_HOST ""
+FORWARD_TARGET_HOST="$RESOLVED_VALUE"
+FORWARD_TARGET_HOST_SOURCE="$RESOLVED_SOURCE"
+
+case "$REGION_LOWER" in
   sg)
     DEFAULT_PEER="kanidm-ams.${TAILNET_DNS_NAME}"
     ;;
@@ -49,7 +85,9 @@ case "$REGION" in
     ;;
 esac
 
-FORWARD_TARGET_HOST="${FORWARD_TARGET_HOST:-$DEFAULT_PEER}"
+if [ -z "$FORWARD_TARGET_HOST_SOURCE" ]; then
+  FORWARD_TARGET_HOST="$DEFAULT_PEER"
+fi
 [ -n "$FORWARD_TARGET_HOST" ] || die "Cannot derive FORWARD_TARGET_HOST from BUNNYNET_MC_REGION=${REGION_RAW}; set FORWARD_TARGET_HOST explicitly"
 
 if [ "$FORWARD_START_DELAY_SECONDS" -gt 0 ]; then

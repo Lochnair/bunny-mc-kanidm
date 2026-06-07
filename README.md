@@ -2,7 +2,7 @@
 
 Production-oriented container images for running Kanidm on Bunny.net Magic Containers.
 
-This repository builds three linux/amd64 images:
+This repository builds three linux/amd64 images that are intended to run together in one Bunny Magic Containers app with multiple regions, for example AMS and SG:
 
 - `kanidm-bunny`: s6-overlay supervised Kanidm server that generates `/data/server.toml`, runs configtest before startup, and exposes a localhost-only ops API on `127.0.0.1:9080`.
 - `tailscale-sidecar`: Tailscale userspace sidecar with SOCKS5 and `tailscale serve` for replication traffic.
@@ -23,6 +23,8 @@ Optional LDAPS can later be exposed privately with `tailscale serve` to `127.0.0
 Kanidm operations use the built-in ops API through Tailscale Serve only. Do not expose `127.0.0.1:9080` through Bunny public HTTP/CDN endpoints.
 
 Kanidm `domain` and `origin` must remain the public identity domain, for example `idm.svee.eu` and `https://idm.svee.eu`. Do not set them to Tailscale names. Replication has its own `repl://kanidm-sg.nessie-monster.ts.net:8444` style origin.
+
+Use one Bunny app for the public `idm.svee.eu` endpoint so Bunny CDN routing and load balancing stay on one surface, and so per-region persistent volumes and Tailscale node identities are created in the final topology from day one. Bunny provides `BUNNYNET_MC_REGION` at runtime; `kanidm-bunny` and `socat-forwarder` use it to resolve region-specific env vars such as `KANIDM_REPL_ORIGIN_AMS` or `FORWARD_TARGET_HOST_SG`, falling back to the global variable name for single-region deployments.
 
 ## Local Builds
 

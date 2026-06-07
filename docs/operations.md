@@ -1,5 +1,9 @@
 # Operations
 
+## App Topology
+
+Run AMS and SG as regions of one Bunny Magic Containers app from the start. Moving from separate Bunny apps into one app later can recreate or move Kanidm persistent volumes and Tailscale state, changing the node identities that replication and MagicDNS rely on. Avoid that migration path and keep the public `idm.svee.eu` Bunny endpoint on the single multi-region app.
+
 ## Rotate TS_AUTHKEY
 
 Create a new reusable or ephemeral auth key with `tag:kanidm` permissions in Tailscale. Update Bunny environment variables only for regions that need a fresh login, then restart the Tailscale sidecar.
