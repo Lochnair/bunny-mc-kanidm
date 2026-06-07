@@ -1,0 +1,88 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:recommended",
+    "docker:enableMajor",
+    "helpers:pinGitHubActionDigests"
+  ],
+  "dependencyDashboard": true,
+  "automerge": false,
+  "labels": [
+    "dependencies"
+  ],
+  "separateMajorMinor": true,
+  "packageRules": [
+    {
+      "matchDatasources": [
+        "docker"
+      ],
+      "addLabels": [
+        "containers"
+      ]
+    },
+    {
+      "matchDatasources": [
+        "docker"
+      ],
+      "matchPackageNames": [
+        "kanidm/server"
+      ],
+      "groupName": "Kanidm server image",
+      "addLabels": [
+        "kanidm",
+        "containers"
+      ]
+    },
+    {
+      "matchDatasources": [
+        "docker"
+      ],
+      "matchPackageNames": [
+        "tailscale/tailscale"
+      ],
+      "groupName": "Tailscale sidecar image",
+      "addLabels": [
+        "tailscale",
+        "containers"
+      ]
+    },
+    {
+      "matchDatasources": [
+        "docker"
+      ],
+      "matchPackageNames": [
+        "alpine"
+      ],
+      "matchUpdateTypes": [
+        "minor",
+        "patch"
+      ],
+      "groupName": "Alpine base image updates",
+      "addLabels": [
+        "containers"
+      ]
+    },
+    {
+      "matchManagers": [
+        "github-actions"
+      ],
+      "matchUpdateTypes": [
+        "minor",
+        "patch",
+        "digest"
+      ],
+      "groupName": "GitHub Actions non-major updates",
+      "addLabels": [
+        "github-actions"
+      ]
+    },
+    {
+      "matchUpdateTypes": [
+        "major"
+      ],
+      "addLabels": [
+        "major-update"
+      ]
+    }
+  ]
+}
