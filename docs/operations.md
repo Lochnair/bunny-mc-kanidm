@@ -18,14 +18,20 @@ To publish manually, run the `Build images` workflow with `workflow_dispatch`.
 
 ## Certificate Rotation
 
-Use Bunny env vars to rotate the Kanidm public TLS files:
+By default, `kanidm-bunny` maintains a self-signed Kanidm origin certificate and key at `/data/chain.pem` and `/data/key.pem`. Public clients see Bunny's certificate for `https://idm.svee.eu`, not this origin certificate. If Bunny endpoint origin SSL validation rejects self-signed origin certificates, provide a publicly trusted origin certificate through env vars or configure Bunny origin validation appropriately.
+
+Use Bunny env vars to rotate real Kanidm origin TLS files:
 
 1. Update `KANIDM_TLS_CHAIN_PEM_B64` and `KANIDM_TLS_KEY_PEM_B64` in Bunny with the new base64-encoded `fullchain.pem` and `privkey.pem` values.
 2. Redeploy or restart the app so `kanidm-bunny` rewrites `/data/chain.pem` and `/data/key.pem` before configtest.
 3. Confirm logs show `kanidmd configtest -c /data/server.toml` runs and passes.
 4. Confirm the public Kanidm endpoint works with the new certificate.
 
-Kanidm config comments describe reloading TLS files on `SIGHUP`, but in this Bunny/s6 setup a restart or redeploy is the simple supported path. Treat `KANIDM_TLS_KEY_PEM_B64` as a private-key secret. Leaving the TLS env vars set causes the files to be rewritten on every container start; remove them after rotation only if you want the persisted files to remain untouched on future starts.
+Manual TLS env provisioning overrides self-signed generation. Raw PEM env vars remain supported as `KANIDM_TLS_CHAIN_PEM` and `KANIDM_TLS_KEY_PEM`; do not set both raw and base64 variants for the same file.
+
+For self-signed origin TLS, startup automatically regenerates both files when either file is missing, the certificate is expired, the certificate cannot be parsed, or it is expiring within `KANIDM_TLS_SELF_SIGNED_REGENERATE_IF_EXPIRES_WITHIN_DAYS`. To force self-signed rotation, delete or replace `/data/chain.pem` and `/data/key.pem`, or lower the threshold and redeploy.
+
+Kanidm config comments describe reloading TLS files on `SIGHUP`, but in this Bunny/s6 setup a restart or redeploy is the simple supported path. Treat `KANIDM_TLS_KEY_PEM_B64` as a private-key secret. Leaving real TLS env vars set causes the files to be rewritten on every container start.
 
 ## Logs
 

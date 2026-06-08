@@ -5,7 +5,7 @@ CONFIG_PATH="${CONFIG_PATH:-/data/server.toml}"
 PEER_CERT_PATH="${PEER_CERT_PATH:-/data/replication-peer-cert.pem}"
 
 # shellcheck source=images/kanidm-bunny/rootfs/usr/local/lib/kanidm-env-files.sh
-. /usr/local/lib/kanidm-env-files.sh
+. "${KANIDM_ENV_FILES_LIB:-/usr/local/lib/kanidm-env-files.sh}"
 
 log() {
   printf '[kanidm-config] %s\n' "$*"
@@ -60,6 +60,13 @@ toml_escape() {
   printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'
 }
 
+tls_env_material_is_set() {
+  env_is_set KANIDM_TLS_CHAIN_PEM \
+    || env_is_set KANIDM_TLS_CHAIN_PEM_B64 \
+    || env_is_set KANIDM_TLS_KEY_PEM \
+    || env_is_set KANIDM_TLS_KEY_PEM_B64
+}
+
 require_nonempty() {
   name="$1"
   eval "value=\${$name:-}"
@@ -106,11 +113,145 @@ write_trusted_section() {
   } >> "$CONFIG_PATH"
 }
 
+trim_space() {
+  printf '%s' "$1" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//'
+}
+
+positive_integer() {
+  case "$1" in
+    ''|*[!0123456789]*) return 1 ;;
+    *) [ "$1" -gt 0 ] ;;
+  esac
+}
+
+nonnegative_integer() {
+  case "$1" in
+    ''|*[!0123456789]*) return 1 ;;
+    *) return 0 ;;
+  esac
+}
+
+require_openssl() {
+  command -v openssl >/dev/null 2>&1 || die "openssl is required to generate or validate self-signed TLS material"
+}
+
+tls_cert_valid_beyond_threshold() {
+  require_openssl
+  threshold_seconds=$((KANIDM_TLS_SELF_SIGNED_REGENERATE_IF_EXPIRES_WITHIN_DAYS * 86400))
+  openssl x509 -checkend "$threshold_seconds" -noout -in "$KANIDM_TLS_CHAIN" >/dev/null 2>&1
+}
+
+generate_self_signed_tls() {
+  require_openssl
+
+  dest_dir=$(dirname "$KANIDM_TLS_CHAIN")
+  key_dir=$(dirname "$KANIDM_TLS_KEY")
+  mkdir -p "$dest_dir" "$key_dir"
+
+  chain_base=$(basename "$KANIDM_TLS_CHAIN")
+  key_base=$(basename "$KANIDM_TLS_KEY")
+  tmp_conf="${dest_dir}/.${chain_base}.openssl.$$"
+  tmp_chain="${dest_dir}/.${chain_base}.tmp.$$"
+  tmp_key="${key_dir}/.${key_base}.tmp.$$"
+  rm -f "$tmp_conf" "$tmp_chain" "$tmp_key"
+
+  san_count=0
+  old_ifs="$IFS"
+  IFS=,
+  {
+    printf '[req]\n'
+    printf 'prompt = no\n'
+    printf 'distinguished_name = dn\n'
+    printf 'x509_extensions = v3_req\n'
+    printf '\n[dn]\n'
+    printf 'CN = %s\n' "$KANIDM_TLS_SELF_SIGNED_CN"
+    printf '\n[v3_req]\n'
+    printf 'basicConstraints = critical,CA:false\n'
+    printf 'keyUsage = critical,digitalSignature,keyEncipherment\n'
+    printf 'extendedKeyUsage = serverAuth\n'
+    printf 'subjectAltName = @alt_names\n'
+    printf '\n[alt_names]\n'
+    for item in $KANIDM_TLS_SELF_SIGNED_SAN; do
+      item=$(trim_space "$item")
+      [ -n "$item" ] || continue
+      san_count=$((san_count + 1))
+      printf 'DNS.%s = %s\n' "$san_count" "$item"
+    done
+  } > "$tmp_conf"
+  IFS="$old_ifs"
+
+  if [ "$san_count" -eq 0 ]; then
+    rm -f "$tmp_conf" "$tmp_chain" "$tmp_key"
+    die "KANIDM_TLS_SELF_SIGNED_SAN must contain at least one DNS name"
+  fi
+
+  log "Generating self-signed TLS certificate at ${KANIDM_TLS_CHAIN} and key at ${KANIDM_TLS_KEY}"
+  if [ "$KANIDM_TLS_SELF_SIGNED_KEY_TYPE" = rsa ]; then
+    openssl req -x509 -newkey "rsa:${KANIDM_TLS_SELF_SIGNED_RSA_BITS}" -sha256 -nodes \
+      -days "$KANIDM_TLS_SELF_SIGNED_DAYS" \
+      -keyout "$tmp_key" \
+      -out "$tmp_chain" \
+      -config "$tmp_conf" >/dev/null 2>&1 \
+      || { rm -f "$tmp_conf" "$tmp_chain" "$tmp_key"; die "Failed to generate RSA self-signed TLS material"; }
+  else
+    openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -sha256 -nodes \
+      -days "$KANIDM_TLS_SELF_SIGNED_DAYS" \
+      -keyout "$tmp_key" \
+      -out "$tmp_chain" \
+      -config "$tmp_conf" >/dev/null 2>&1 \
+      || { rm -f "$tmp_conf" "$tmp_chain" "$tmp_key"; die "Failed to generate EC self-signed TLS material"; }
+  fi
+
+  chmod 0644 "$tmp_chain" || { rm -f "$tmp_conf" "$tmp_chain" "$tmp_key"; die "Failed to chmod self-signed TLS chain temporary file"; }
+  chmod 0600 "$tmp_key" || { rm -f "$tmp_conf" "$tmp_chain" "$tmp_key"; die "Failed to chmod self-signed TLS key temporary file"; }
+  mv "$tmp_chain" "$KANIDM_TLS_CHAIN" || { rm -f "$tmp_conf" "$tmp_chain" "$tmp_key"; die "Failed to install self-signed TLS chain at ${KANIDM_TLS_CHAIN}"; }
+  mv "$tmp_key" "$KANIDM_TLS_KEY" || { rm -f "$tmp_conf" "$tmp_key"; die "Failed to install self-signed TLS key at ${KANIDM_TLS_KEY}"; }
+  rm -f "$tmp_conf"
+}
+
+provision_self_signed_tls_if_needed() {
+  if ! is_true "$KANIDM_TLS_SELF_SIGNED_ENABLED"; then
+    if [ ! -f "$KANIDM_TLS_CHAIN" ] || [ ! -f "$KANIDM_TLS_KEY" ]; then
+      die "TLS files are missing and KANIDM_TLS_SELF_SIGNED_ENABLED is disabled"
+    fi
+    if ! tls_cert_valid_beyond_threshold; then
+      die "TLS certificate is invalid, expired, or expiring within threshold and KANIDM_TLS_SELF_SIGNED_ENABLED is disabled"
+    fi
+    log "Self-signed TLS generation disabled; existing TLS files are present and valid"
+    return 0
+  fi
+
+  if [ ! -f "$KANIDM_TLS_CHAIN" ]; then
+    log "TLS chain file missing at ${KANIDM_TLS_CHAIN}; self-signed TLS generation required"
+    generate_self_signed_tls
+    return 0
+  fi
+  if [ ! -f "$KANIDM_TLS_KEY" ]; then
+    log "TLS key file missing at ${KANIDM_TLS_KEY}; self-signed TLS generation required"
+    generate_self_signed_tls
+    return 0
+  fi
+  if tls_cert_valid_beyond_threshold; then
+    log "Existing TLS certificate at ${KANIDM_TLS_CHAIN} is valid beyond threshold; reusing existing TLS files"
+    return 0
+  fi
+
+  log "TLS certificate at ${KANIDM_TLS_CHAIN} is invalid, expired, or near expiry; regenerating self-signed TLS files"
+  generate_self_signed_tls
+}
+
 : "${KANIDM_DOMAIN:=idm.svee.eu}"
 : "${KANIDM_ORIGIN:=https://idm.svee.eu}"
 : "${KANIDM_DB_PATH:=/data/kanidm.db}"
 : "${KANIDM_TLS_CHAIN:=/data/chain.pem}"
 : "${KANIDM_TLS_KEY:=/data/key.pem}"
+: "${KANIDM_TLS_SELF_SIGNED_ENABLED:=true}"
+: "${KANIDM_TLS_SELF_SIGNED_CN:=$KANIDM_DOMAIN}"
+: "${KANIDM_TLS_SELF_SIGNED_SAN:=$KANIDM_TLS_SELF_SIGNED_CN}"
+: "${KANIDM_TLS_SELF_SIGNED_DAYS:=3650}"
+: "${KANIDM_TLS_SELF_SIGNED_REGENERATE_IF_EXPIRES_WITHIN_DAYS:=30}"
+: "${KANIDM_TLS_SELF_SIGNED_KEY_TYPE:=ec}"
+: "${KANIDM_TLS_SELF_SIGNED_RSA_BITS:=2048}"
 : "${KANIDM_ONLINE_BACKUP_PATH:=/data/kanidm/backups/}"
 : "${KANIDM_ONLINE_BACKUP_SCHEDULE:=00 22 * * *}"
 : "${KANIDM_REPL_ENABLED:=false}"
@@ -157,8 +298,26 @@ fi
 validate_client_address_mode KANIDM_HTTP_CLIENT_ADDRESS_INFO_MODE "$KANIDM_HTTP_CLIENT_ADDRESS_INFO_MODE" "x-forward-for proxy-v2 proxy-v1"
 validate_client_address_mode KANIDM_LDAP_CLIENT_ADDRESS_INFO_MODE "$KANIDM_LDAP_CLIENT_ADDRESS_INFO_MODE" "proxy-v2 proxy-v1"
 
+positive_integer "$KANIDM_TLS_SELF_SIGNED_DAYS" || die "KANIDM_TLS_SELF_SIGNED_DAYS must be a positive integer"
+nonnegative_integer "$KANIDM_TLS_SELF_SIGNED_REGENERATE_IF_EXPIRES_WITHIN_DAYS" || die "KANIDM_TLS_SELF_SIGNED_REGENERATE_IF_EXPIRES_WITHIN_DAYS must be a non-negative integer"
+case "$KANIDM_TLS_SELF_SIGNED_KEY_TYPE" in
+  ec|rsa) ;;
+  *) die "KANIDM_TLS_SELF_SIGNED_KEY_TYPE must be one of: ec rsa" ;;
+esac
+positive_integer "$KANIDM_TLS_SELF_SIGNED_RSA_BITS" || die "KANIDM_TLS_SELF_SIGNED_RSA_BITS must be a positive integer"
+
+tls_env_material_present=false
+if tls_env_material_is_set; then
+  tls_env_material_present=true
+fi
+
 write_env_file "TLS chain file" KANIDM_TLS_CHAIN_PEM KANIDM_TLS_CHAIN_PEM_B64 "$KANIDM_TLS_CHAIN" 0644
 write_env_file "TLS key file" KANIDM_TLS_KEY_PEM KANIDM_TLS_KEY_PEM_B64 "$KANIDM_TLS_KEY" 0600
+if [ "$tls_env_material_present" = true ]; then
+  log "Explicit TLS environment material provided; self-signed TLS generation skipped"
+else
+  provision_self_signed_tls_if_needed
+fi
 
 log "Generating ${CONFIG_PATH} from environment"
 log "region=${REGION_RAW}"
@@ -168,7 +327,7 @@ log "bindaddress=${KANIDM_BINDADDRESS}"
 log "replication_enabled=${KANIDM_REPL_ENABLED}"
 log "ldap_enabled=${KANIDM_LDAP_ENABLED}"
 
-mkdir -p /data/kanidm/backups
+mkdir -p "$KANIDM_ONLINE_BACKUP_PATH"
 
 umask 077
 {

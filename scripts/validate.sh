@@ -188,6 +188,114 @@ dummy-key
   rm -rf "$tmp_dir"
 }
 
+run_self_signed_tls_test() {
+  if ! command -v openssl >/dev/null 2>&1; then
+    log "Skipping self-signed TLS validation; openssl command not found"
+    return 0
+  fi
+
+  log "Testing self-signed TLS generation"
+
+  tmp_dir=$(mktemp -d "${TMPDIR:-/tmp}/bunny-kanidm-self-signed.XXXXXX")
+  chain_path="${tmp_dir}/tls/chain.pem"
+  key_path="${tmp_dir}/tls/key.pem"
+  config_path="${tmp_dir}/server.toml"
+  backup_path="${tmp_dir}/backups"
+  generator="images/kanidm-bunny/rootfs/usr/local/bin/generate-kanidm-config"
+  env_lib="images/kanidm-bunny/rootfs/usr/local/lib/kanidm-env-files.sh"
+
+  output=$(
+    CONFIG_PATH="$config_path"
+    KANIDM_ENV_FILES_LIB="$env_lib"
+    KANIDM_DOMAIN="idm.svee.eu"
+    KANIDM_ORIGIN="https://idm.svee.eu"
+    KANIDM_DB_PATH="${tmp_dir}/kanidm.db"
+    KANIDM_TLS_CHAIN="$chain_path"
+    KANIDM_TLS_KEY="$key_path"
+    KANIDM_TLS_SELF_SIGNED_CN="idm.svee.eu"
+    KANIDM_TLS_SELF_SIGNED_SAN="idm.svee.eu,login.svee.eu"
+    KANIDM_ONLINE_BACKUP_PATH="$backup_path"
+    export CONFIG_PATH KANIDM_ENV_FILES_LIB KANIDM_DOMAIN KANIDM_ORIGIN KANIDM_DB_PATH
+    export KANIDM_TLS_CHAIN KANIDM_TLS_KEY KANIDM_TLS_SELF_SIGNED_CN KANIDM_TLS_SELF_SIGNED_SAN
+    export KANIDM_ONLINE_BACKUP_PATH
+    "$generator"
+  ) || fail "self-signed TLS generation failed for missing files"
+
+  [ -f "$chain_path" ] || fail "self-signed TLS chain file was not created"
+  [ -f "$key_path" ] || fail "self-signed TLS key file was not created"
+  openssl x509 -checkend 2592000 -noout -in "$chain_path" >/dev/null 2>&1 \
+    || fail "self-signed TLS certificate is not valid beyond default threshold"
+
+  chain_mode=$(stat_mode "$chain_path" || true)
+  key_mode=$(stat_mode "$key_path" || true)
+  if [ -n "$chain_mode" ] && [ "$chain_mode" != 644 ]; then
+    fail "self-signed TLS chain file mode is $chain_mode, expected 644"
+  fi
+  if [ -n "$key_mode" ] && [ "$key_mode" != 600 ]; then
+    fail "self-signed TLS key file mode is $key_mode, expected 600"
+  fi
+
+  cert_text=$(openssl x509 -noout -text -in "$chain_path" 2>/dev/null || true)
+  case "$cert_text" in
+    *"DNS:idm.svee.eu"* ) ;;
+    *) fail "self-signed TLS certificate does not contain DNS SAN idm.svee.eu" ;;
+  esac
+  case "$cert_text" in
+    *"DNS:login.svee.eu"* ) ;;
+    *) fail "self-signed TLS certificate does not contain DNS SAN login.svee.eu" ;;
+  esac
+
+  first_fingerprint=$(openssl x509 -noout -fingerprint -sha256 -in "$chain_path" 2>/dev/null || true)
+  (
+    CONFIG_PATH="$config_path"
+    KANIDM_ENV_FILES_LIB="$env_lib"
+    KANIDM_DOMAIN="idm.svee.eu"
+    KANIDM_ORIGIN="https://idm.svee.eu"
+    KANIDM_DB_PATH="${tmp_dir}/kanidm.db"
+    KANIDM_TLS_CHAIN="$chain_path"
+    KANIDM_TLS_KEY="$key_path"
+    KANIDM_TLS_SELF_SIGNED_CN="idm.svee.eu"
+    KANIDM_TLS_SELF_SIGNED_SAN="idm.svee.eu,login.svee.eu"
+    KANIDM_ONLINE_BACKUP_PATH="$backup_path"
+    export CONFIG_PATH KANIDM_ENV_FILES_LIB KANIDM_DOMAIN KANIDM_ORIGIN KANIDM_DB_PATH
+    export KANIDM_TLS_CHAIN KANIDM_TLS_KEY KANIDM_TLS_SELF_SIGNED_CN KANIDM_TLS_SELF_SIGNED_SAN
+    export KANIDM_ONLINE_BACKUP_PATH
+    "$generator"
+  ) >/dev/null || fail "self-signed TLS second run failed"
+  second_fingerprint=$(openssl x509 -noout -fingerprint -sha256 -in "$chain_path" 2>/dev/null || true)
+  if [ -n "$first_fingerprint" ] && [ "$first_fingerprint" != "$second_fingerprint" ]; then
+    fail "self-signed TLS second run did not reuse non-expiring certificate"
+  fi
+
+  printf '%s\n' "not a certificate" > "$chain_path"
+  (
+    CONFIG_PATH="$config_path"
+    KANIDM_ENV_FILES_LIB="$env_lib"
+    KANIDM_DOMAIN="idm.svee.eu"
+    KANIDM_ORIGIN="https://idm.svee.eu"
+    KANIDM_DB_PATH="${tmp_dir}/kanidm.db"
+    KANIDM_TLS_CHAIN="$chain_path"
+    KANIDM_TLS_KEY="$key_path"
+    KANIDM_TLS_SELF_SIGNED_CN="idm.svee.eu"
+    KANIDM_TLS_SELF_SIGNED_SAN="idm.svee.eu,login.svee.eu"
+    KANIDM_ONLINE_BACKUP_PATH="$backup_path"
+    export CONFIG_PATH KANIDM_ENV_FILES_LIB KANIDM_DOMAIN KANIDM_ORIGIN KANIDM_DB_PATH
+    export KANIDM_TLS_CHAIN KANIDM_TLS_KEY KANIDM_TLS_SELF_SIGNED_CN KANIDM_TLS_SELF_SIGNED_SAN
+    export KANIDM_ONLINE_BACKUP_PATH
+    "$generator"
+  ) >/dev/null || fail "self-signed TLS regeneration failed for unparsable cert"
+  openssl x509 -checkend 2592000 -noout -in "$chain_path" >/dev/null 2>&1 \
+    || fail "self-signed TLS regeneration did not replace unparsable cert"
+
+  case "$output" in
+    *"BEGIN PRIVATE KEY"*|*"BEGIN EC PRIVATE KEY"*|*"BEGIN RSA PRIVATE KEY"*)
+      fail "self-signed TLS generation printed private key material"
+      ;;
+  esac
+
+  rm -rf "$tmp_dir"
+}
+
 validate_s6_layout() {
   log "Checking s6 service layout"
 
@@ -237,6 +345,7 @@ validate_renovate_json
 validate_github_actions_yaml
 run_go_tests
 run_tls_env_file_test
+run_self_signed_tls_test
 validate_s6_layout
 
 if [ "$failures" -ne 0 ]; then

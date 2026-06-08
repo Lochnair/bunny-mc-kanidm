@@ -35,7 +35,23 @@ COPY --from=s6-overlay /s6-root /
 COPY --from=ops-api /out/kanidm-ops-api /usr/local/bin/kanidm-ops-api
 COPY rootfs/ /
 
-RUN /bin/busybox --install -s /bin && \
+RUN if ! command -v openssl >/dev/null 2>&1; then \
+      if command -v apk >/dev/null 2>&1; then \
+        apk add --no-cache openssl; \
+      elif command -v apt-get >/dev/null 2>&1; then \
+        apt-get update && apt-get install -y --no-install-recommends openssl && rm -rf /var/lib/apt/lists/*; \
+      elif command -v microdnf >/dev/null 2>&1; then \
+        microdnf install -y openssl && microdnf clean all; \
+      elif command -v dnf >/dev/null 2>&1; then \
+        dnf install -y openssl && dnf clean all; \
+      elif command -v zypper >/dev/null 2>&1; then \
+        zypper --non-interactive install --no-recommends openssl && zypper clean -a; \
+      else \
+        echo "openssl is required but no supported package manager was found" >&2; \
+        exit 1; \
+      fi; \
+    fi && \
+    /bin/busybox --install -s /bin && \
     mkdir -p /run /var && \
     rm -rf /var/run && \
     ln -s /run /var/run && \

@@ -38,15 +38,30 @@ or:
 scripts/build-all.sh
 ```
 
-## Initial TLS Files On Bunny
+## Origin TLS Files On Bunny
 
-Kanidm requires `tls_chain` and `tls_key` files before `kanidmd configtest` can pass. Bunny Magic Containers do not provide a convenient `docker cp` or interactive shell workflow for placing initial files into the persistent `/data` volume, so the `kanidm-bunny` image can write TLS files from environment variables during startup.
+Kanidm requires `tls_chain` and `tls_key` files before `kanidmd configtest` can pass. In the intended Bunny deployment, public clients connect to Bunny for `https://idm.svee.eu` and see Bunny's public certificate. The Kanidm origin certificate is only used behind Bunny, so `kanidm-bunny` auto-generates a self-signed origin certificate and key by default at `/data/chain.pem` and `/data/key.pem`.
 
-Recommended Bunny env vars:
+Minimal Bunny env vars:
 
 ```sh
 KANIDM_TLS_CHAIN=/data/chain.pem
 KANIDM_TLS_KEY=/data/key.pem
+```
+
+The generated files are stored in `/data`, so they persist across restarts. Startup reuses an existing certificate when it is valid and not expiring within the configured threshold. It regenerates both files when either file is missing, the certificate is expired, unparsable, or expiring soon.
+
+Optional self-signed settings:
+
+```sh
+KANIDM_TLS_SELF_SIGNED_ENABLED=true
+KANIDM_TLS_SELF_SIGNED_CN=idm.svee.eu
+KANIDM_TLS_SELF_SIGNED_SAN=idm.svee.eu
+```
+
+If Bunny endpoint origin SSL validation rejects self-signed origin certificates, provide a publicly trusted origin certificate instead or configure Bunny origin validation appropriately. Manual TLS env provisioning remains supported and overrides self-signed generation:
+
+```sh
 KANIDM_TLS_CHAIN_PEM_B64=<base64-fullchain-pem>
 KANIDM_TLS_KEY_PEM_B64=<base64-private-key-pem>
 ```
@@ -65,7 +80,7 @@ base64 -i fullchain.pem
 base64 -i privkey.pem
 ```
 
-The decoded files are written to `/data/chain.pem` mode `0644` and `/data/key.pem` mode `0600` by default before configtest. The private key env var is a secret; treat Bunny env access and logs accordingly. After the files are written to the persistent volume, these env vars may be removed if you do not want startup to overwrite them. Leaving them set rewrites the files on every container start, which is acceptable for certificate rotation when the Bunny env values are updated.
+The decoded files are written to `/data/chain.pem` mode `0644` and `/data/key.pem` mode `0600` by default before configtest. The private key env var is a secret; treat Bunny env access and logs accordingly. Leaving real certificate env vars set rewrites the files on every container start, which is acceptable for rotation when the Bunny env values are updated.
 
 ## Published Images
 
