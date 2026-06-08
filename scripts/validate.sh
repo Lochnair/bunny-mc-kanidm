@@ -99,6 +99,25 @@ run_go_tests() {
   log "Running Go tests for kanidm ops API"
   (cd images/kanidm-bunny/ops-api && GOCACHE="${GOCACHE:-/tmp/bunny-kanidm-go-cache}" go test ./...) \
     || fail "go test failed for kanidm ops API"
+
+  log "Running Go tests for kanidm cert helper"
+  (cd images/kanidm-bunny/cert-helper && GOCACHE="${GOCACHE:-/tmp/bunny-kanidm-go-cache}" go test ./...) \
+    || fail "go test failed for kanidm cert helper"
+}
+
+cert_helper_binary() {
+  if ! command -v go >/dev/null 2>&1; then
+    return 1
+  fi
+
+  helper_dir="${TMPDIR:-/tmp}/bunny-kanidm-cert-helper"
+  helper_path="${helper_dir}/kanidm-cert-helper"
+  mkdir -p "$helper_dir"
+  if [ ! -x "$helper_path" ]; then
+    (cd images/kanidm-bunny/cert-helper && GOCACHE="${GOCACHE:-/tmp/bunny-kanidm-go-cache}" go build -trimpath -o "$helper_path" .) \
+      || return 1
+  fi
+  printf '%s' "$helper_path"
 }
 
 stat_mode() {
@@ -189,8 +208,9 @@ dummy-key
 }
 
 run_self_signed_tls_test() {
-  if ! command -v openssl >/dev/null 2>&1; then
-    log "Skipping self-signed TLS validation; openssl command not found"
+  helper_path=$(cert_helper_binary || true)
+  if [ -z "$helper_path" ]; then
+    log "Skipping self-signed TLS validation; go command not found or helper build failed"
     return 0
   fi
 
@@ -215,15 +235,21 @@ run_self_signed_tls_test() {
     KANIDM_TLS_SELF_SIGNED_CN="idm.svee.eu"
     KANIDM_TLS_SELF_SIGNED_SAN="idm.svee.eu,login.svee.eu"
     KANIDM_ONLINE_BACKUP_PATH="$backup_path"
+    KANIDM_CERT_HELPER="$helper_path"
     export CONFIG_PATH KANIDM_ENV_FILES_LIB KANIDM_DOMAIN KANIDM_ORIGIN KANIDM_DB_PATH
     export KANIDM_TLS_CHAIN KANIDM_TLS_KEY KANIDM_TLS_SELF_SIGNED_CN KANIDM_TLS_SELF_SIGNED_SAN
-    export KANIDM_ONLINE_BACKUP_PATH
+    export KANIDM_ONLINE_BACKUP_PATH KANIDM_CERT_HELPER
     "$generator"
   ) || fail "self-signed TLS generation failed for missing files"
 
   [ -f "$chain_path" ] || fail "self-signed TLS chain file was not created"
   [ -f "$key_path" ] || fail "self-signed TLS key file was not created"
-  openssl x509 -checkend 2592000 -noout -in "$chain_path" >/dev/null 2>&1 \
+  "$helper_path" check \
+    --chain "$chain_path" \
+    --key "$key_path" \
+    --cn idm.svee.eu \
+    --san idm.svee.eu,login.svee.eu \
+    --renew-within-days 30 >/dev/null 2>&1 \
     || fail "self-signed TLS certificate is not valid beyond default threshold"
 
   chain_mode=$(stat_mode "$chain_path" || true)
@@ -235,17 +261,8 @@ run_self_signed_tls_test() {
     fail "self-signed TLS key file mode is $key_mode, expected 600"
   fi
 
-  cert_text=$(openssl x509 -noout -text -in "$chain_path" 2>/dev/null || true)
-  case "$cert_text" in
-    *"DNS:idm.svee.eu"* ) ;;
-    *) fail "self-signed TLS certificate does not contain DNS SAN idm.svee.eu" ;;
-  esac
-  case "$cert_text" in
-    *"DNS:login.svee.eu"* ) ;;
-    *) fail "self-signed TLS certificate does not contain DNS SAN login.svee.eu" ;;
-  esac
-
-  first_fingerprint=$(openssl x509 -noout -fingerprint -sha256 -in "$chain_path" 2>/dev/null || true)
+  first_cert_copy="${tmp_dir}/first-chain.pem"
+  cp "$chain_path" "$first_cert_copy"
   (
     CONFIG_PATH="$config_path"
     KANIDM_ENV_FILES_LIB="$env_lib"
@@ -257,13 +274,13 @@ run_self_signed_tls_test() {
     KANIDM_TLS_SELF_SIGNED_CN="idm.svee.eu"
     KANIDM_TLS_SELF_SIGNED_SAN="idm.svee.eu,login.svee.eu"
     KANIDM_ONLINE_BACKUP_PATH="$backup_path"
+    KANIDM_CERT_HELPER="$helper_path"
     export CONFIG_PATH KANIDM_ENV_FILES_LIB KANIDM_DOMAIN KANIDM_ORIGIN KANIDM_DB_PATH
     export KANIDM_TLS_CHAIN KANIDM_TLS_KEY KANIDM_TLS_SELF_SIGNED_CN KANIDM_TLS_SELF_SIGNED_SAN
-    export KANIDM_ONLINE_BACKUP_PATH
+    export KANIDM_ONLINE_BACKUP_PATH KANIDM_CERT_HELPER
     "$generator"
   ) >/dev/null || fail "self-signed TLS second run failed"
-  second_fingerprint=$(openssl x509 -noout -fingerprint -sha256 -in "$chain_path" 2>/dev/null || true)
-  if [ -n "$first_fingerprint" ] && [ "$first_fingerprint" != "$second_fingerprint" ]; then
+  if ! cmp -s "$chain_path" "$first_cert_copy"; then
     fail "self-signed TLS second run did not reuse non-expiring certificate"
   fi
 
@@ -279,12 +296,18 @@ run_self_signed_tls_test() {
     KANIDM_TLS_SELF_SIGNED_CN="idm.svee.eu"
     KANIDM_TLS_SELF_SIGNED_SAN="idm.svee.eu,login.svee.eu"
     KANIDM_ONLINE_BACKUP_PATH="$backup_path"
+    KANIDM_CERT_HELPER="$helper_path"
     export CONFIG_PATH KANIDM_ENV_FILES_LIB KANIDM_DOMAIN KANIDM_ORIGIN KANIDM_DB_PATH
     export KANIDM_TLS_CHAIN KANIDM_TLS_KEY KANIDM_TLS_SELF_SIGNED_CN KANIDM_TLS_SELF_SIGNED_SAN
-    export KANIDM_ONLINE_BACKUP_PATH
+    export KANIDM_ONLINE_BACKUP_PATH KANIDM_CERT_HELPER
     "$generator"
   ) >/dev/null || fail "self-signed TLS regeneration failed for unparsable cert"
-  openssl x509 -checkend 2592000 -noout -in "$chain_path" >/dev/null 2>&1 \
+  "$helper_path" check \
+    --chain "$chain_path" \
+    --key "$key_path" \
+    --cn idm.svee.eu \
+    --san idm.svee.eu,login.svee.eu \
+    --renew-within-days 30 >/dev/null 2>&1 \
     || fail "self-signed TLS regeneration did not replace unparsable cert"
 
   case "$output" in

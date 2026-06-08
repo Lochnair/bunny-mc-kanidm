@@ -26,6 +26,13 @@ COPY ops-api/go.mod ./
 COPY ops-api/main.go ./
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o /out/kanidm-ops-api .
 
+FROM golang:1.25.4-alpine3.22 AS cert-helper
+
+WORKDIR /src
+COPY cert-helper/go.mod ./
+COPY cert-helper/main.go ./
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o /out/kanidm-cert-helper .
+
 FROM kanidm/server:1.10.3
 
 COPY --from=busybox:1.37.0-musl /bin/busybox /bin/busybox
@@ -33,25 +40,10 @@ SHELL ["/bin/busybox", "sh", "-c"]
 
 COPY --from=s6-overlay /s6-root /
 COPY --from=ops-api /out/kanidm-ops-api /usr/local/bin/kanidm-ops-api
+COPY --from=cert-helper /out/kanidm-cert-helper /usr/local/bin/kanidm-cert-helper
 COPY rootfs/ /
 
-RUN if ! command -v openssl >/dev/null 2>&1; then \
-      if command -v apk >/dev/null 2>&1; then \
-        apk add --no-cache openssl; \
-      elif command -v apt-get >/dev/null 2>&1; then \
-        apt-get update && apt-get install -y --no-install-recommends openssl && rm -rf /var/lib/apt/lists/*; \
-      elif command -v microdnf >/dev/null 2>&1; then \
-        microdnf install -y openssl && microdnf clean all; \
-      elif command -v dnf >/dev/null 2>&1; then \
-        dnf install -y openssl && dnf clean all; \
-      elif command -v zypper >/dev/null 2>&1; then \
-        zypper --non-interactive install --no-recommends openssl && zypper clean -a; \
-      else \
-        echo "openssl is required but no supported package manager was found" >&2; \
-        exit 1; \
-      fi; \
-    fi && \
-    /bin/busybox --install -s /bin && \
+RUN /bin/busybox --install -s /bin && \
     mkdir -p /run /var && \
     rm -rf /var/run && \
     ln -s /run /var/run && \
@@ -63,6 +55,7 @@ RUN if ! command -v openssl >/dev/null 2>&1; then \
       /usr/local/bin/run-kanidm-ops-api \
       /usr/local/bin/finish-kanidm-server \
       /usr/local/bin/kanidm-ops-api \
+      /usr/local/bin/kanidm-cert-helper \
       /etc/s6-overlay/s6-rc.d/kanidm-config/up \
       /etc/s6-overlay/s6-rc.d/kanidm-server/run \
       /etc/s6-overlay/s6-rc.d/kanidm-server/finish \
