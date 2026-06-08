@@ -4,6 +4,9 @@ set -eu
 CONFIG_PATH="${CONFIG_PATH:-/data/server.toml}"
 PEER_CERT_PATH="${PEER_CERT_PATH:-/data/replication-peer-cert.pem}"
 
+# shellcheck source=images/kanidm-bunny/rootfs/usr/local/lib/kanidm-env-files.sh
+. /usr/local/lib/kanidm-env-files.sh
+
 log() {
   printf '[kanidm-config] %s\n' "$*"
 }
@@ -138,14 +141,6 @@ KANIDM_REPL_PEER_CERT_B64="$RESOLVED_VALUE"
 resolve_env KANIDM_REPL_AUTOMATIC_REFRESH "false"
 KANIDM_REPL_AUTOMATIC_REFRESH="$RESOLVED_VALUE"
 
-log "Generating ${CONFIG_PATH} from environment"
-log "region=${REGION_RAW}"
-log "domain=${KANIDM_DOMAIN}"
-log "origin=${KANIDM_ORIGIN}"
-log "bindaddress=${KANIDM_BINDADDRESS}"
-log "replication_enabled=${KANIDM_REPL_ENABLED}"
-log "ldap_enabled=${KANIDM_LDAP_ENABLED}"
-
 if is_true "$KANIDM_REPL_ENABLED"; then
   require_nonempty KANIDM_REPL_ORIGIN
   if [ -n "$KANIDM_REPL_PEER_CERT" ] && [ -n "$KANIDM_REPL_PEER_CERT_B64" ]; then
@@ -161,6 +156,17 @@ fi
 
 validate_client_address_mode KANIDM_HTTP_CLIENT_ADDRESS_INFO_MODE "$KANIDM_HTTP_CLIENT_ADDRESS_INFO_MODE" "x-forward-for proxy-v2 proxy-v1"
 validate_client_address_mode KANIDM_LDAP_CLIENT_ADDRESS_INFO_MODE "$KANIDM_LDAP_CLIENT_ADDRESS_INFO_MODE" "proxy-v2 proxy-v1"
+
+write_env_file "TLS chain file" KANIDM_TLS_CHAIN_PEM KANIDM_TLS_CHAIN_PEM_B64 "$KANIDM_TLS_CHAIN" 0644
+write_env_file "TLS key file" KANIDM_TLS_KEY_PEM KANIDM_TLS_KEY_PEM_B64 "$KANIDM_TLS_KEY" 0600
+
+log "Generating ${CONFIG_PATH} from environment"
+log "region=${REGION_RAW}"
+log "domain=${KANIDM_DOMAIN}"
+log "origin=${KANIDM_ORIGIN}"
+log "bindaddress=${KANIDM_BINDADDRESS}"
+log "replication_enabled=${KANIDM_REPL_ENABLED}"
+log "ldap_enabled=${KANIDM_LDAP_ENABLED}"
 
 mkdir -p /data/kanidm/backups
 

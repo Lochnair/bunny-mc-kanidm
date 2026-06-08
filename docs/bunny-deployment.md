@@ -41,6 +41,37 @@ For region `SG`, `KANIDM_REPL_ORIGIN_SG` wins, then `KANIDM_REPL_ORIGIN_sg`, the
 
 Keep `KANIDM_DOMAIN` and `KANIDM_ORIGIN` global and public-facing, for example `idm.svee.eu` and `https://idm.svee.eu`.
 
+## TLS Certificate Bootstrap
+
+Kanidm requires the TLS chain and key files to exist before `kanidmd configtest` passes. Bunny Magic Containers do not provide a convenient `docker cp` or shell workflow for seeding initial files into the persistent `/data` volume, so `kanidm-bunny` can write them from env vars at container startup.
+
+Recommended base64 env vars:
+
+```sh
+KANIDM_TLS_CHAIN=/data/chain.pem
+KANIDM_TLS_KEY=/data/key.pem
+KANIDM_TLS_CHAIN_PEM_B64=<base64-fullchain-pem>
+KANIDM_TLS_KEY_PEM_B64=<base64-private-key-pem>
+```
+
+Raw PEM env vars are also supported as `KANIDM_TLS_CHAIN_PEM` and `KANIDM_TLS_KEY_PEM`, but the base64 form is usually easier to paste into Bunny env fields. Do not set both raw and base64 variants for the same file.
+
+Create one-line base64 values locally:
+
+```sh
+# Linux GNU coreutils
+base64 -w0 fullchain.pem
+base64 -w0 privkey.pem
+
+# macOS/BSD
+base64 -i fullchain.pem
+base64 -i privkey.pem
+```
+
+By default, startup decodes the values into `/data/chain.pem` and `/data/key.pem`, creates parent directories if needed, sets the chain to mode `0644`, and sets the key to mode `0600`. The scripts log only that env-provided material was written and the destination path; they do not print PEM or base64 contents.
+
+Treat `KANIDM_TLS_KEY_PEM_B64` and `KANIDM_TLS_KEY_PEM` as private-key secrets. Once the files have been written to the persistent `/data` volume, the env vars may optionally be removed if no further overwrite or rotation is desired. Leaving them set rewrites the files on every container start, which is acceptable for certificate rotation when the Bunny env values are updated.
+
 ## Combined App Env
 
 Set app-level environment variables once. Region-specific values are selected by each regional pod:
@@ -48,6 +79,10 @@ Set app-level environment variables once. Region-specific values are selected by
 ```sh
 KANIDM_DOMAIN=idm.svee.eu
 KANIDM_ORIGIN=https://idm.svee.eu
+KANIDM_TLS_CHAIN=/data/chain.pem
+KANIDM_TLS_KEY=/data/key.pem
+KANIDM_TLS_CHAIN_PEM_B64=<base64-fullchain-pem>
+KANIDM_TLS_KEY_PEM_B64=<base64-private-key-pem>
 KANIDM_REPL_ENABLED=true
 KANIDM_REPL_BINDADDRESS=127.0.0.1:8444
 KANIDM_REPL_ORIGIN_AMS=repl://kanidm-ams.nessie-monster.ts.net:8444

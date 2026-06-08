@@ -41,6 +41,7 @@ RUN /bin/busybox --install -s /bin && \
     ln -s /run /var/run && \
     chmod +x \
       /usr/local/bin/generate-kanidm-config \
+      /usr/local/lib/kanidm-env-files.sh \
       /usr/local/bin/run-kanidm-config \
       /usr/local/bin/run-kanidm-server \
       /usr/local/bin/run-kanidm-ops-api \

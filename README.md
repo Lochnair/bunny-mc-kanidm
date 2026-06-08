@@ -38,6 +38,35 @@ or:
 scripts/build-all.sh
 ```
 
+## Initial TLS Files On Bunny
+
+Kanidm requires `tls_chain` and `tls_key` files before `kanidmd configtest` can pass. Bunny Magic Containers do not provide a convenient `docker cp` or interactive shell workflow for placing initial files into the persistent `/data` volume, so the `kanidm-bunny` image can write TLS files from environment variables during startup.
+
+Recommended Bunny env vars:
+
+```sh
+KANIDM_TLS_CHAIN=/data/chain.pem
+KANIDM_TLS_KEY=/data/key.pem
+KANIDM_TLS_CHAIN_PEM_B64=<base64-fullchain-pem>
+KANIDM_TLS_KEY_PEM_B64=<base64-private-key-pem>
+```
+
+Raw PEM values are also supported as `KANIDM_TLS_CHAIN_PEM` and `KANIDM_TLS_KEY_PEM`; do not set both raw and base64 variants for the same file.
+
+Create one-line values locally:
+
+```sh
+# Linux GNU coreutils
+base64 -w0 fullchain.pem
+base64 -w0 privkey.pem
+
+# macOS/BSD
+base64 -i fullchain.pem
+base64 -i privkey.pem
+```
+
+The decoded files are written to `/data/chain.pem` mode `0644` and `/data/key.pem` mode `0600` by default before configtest. The private key env var is a secret; treat Bunny env access and logs accordingly. After the files are written to the persistent volume, these env vars may be removed if you do not want startup to overwrite them. Leaving them set rewrites the files on every container start, which is acceptable for certificate rotation when the Bunny env values are updated.
+
 ## Published Images
 
 GitHub Actions publishes on `push` to `main` and `workflow_dispatch`, but not on pull requests.

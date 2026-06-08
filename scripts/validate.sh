@@ -16,6 +16,7 @@ run_sh_syntax() {
   log "Checking shell syntax"
   for script in \
     images/kanidm-bunny/rootfs/usr/local/bin/generate-kanidm-config \
+    images/kanidm-bunny/rootfs/usr/local/lib/kanidm-env-files.sh \
     images/kanidm-bunny/rootfs/usr/local/bin/run-kanidm-config \
     images/kanidm-bunny/rootfs/usr/local/bin/run-kanidm-server \
     images/kanidm-bunny/rootfs/usr/local/bin/run-kanidm-ops-api \
@@ -42,6 +43,7 @@ run_shellcheck() {
   log "Running shellcheck"
   shellcheck \
     images/kanidm-bunny/rootfs/usr/local/bin/generate-kanidm-config \
+    images/kanidm-bunny/rootfs/usr/local/lib/kanidm-env-files.sh \
     images/kanidm-bunny/rootfs/usr/local/bin/run-kanidm-config \
     images/kanidm-bunny/rootfs/usr/local/bin/run-kanidm-server \
     images/kanidm-bunny/rootfs/usr/local/bin/run-kanidm-ops-api \
@@ -99,6 +101,93 @@ run_go_tests() {
     || fail "go test failed for kanidm ops API"
 }
 
+stat_mode() {
+  if mode=$(stat -c '%a' "$1" 2>/dev/null); then
+    printf '%s' "$mode"
+    return 0
+  fi
+  if mode=$(stat -f '%Lp' "$1" 2>/dev/null); then
+    printf '%s' "$mode"
+    return 0
+  fi
+  return 1
+}
+
+base64_one_line() {
+  printf '%s' "$1" | base64 | tr -d '\n'
+}
+
+run_tls_env_file_test() {
+  log "Testing TLS env file writer"
+
+  tmp_dir=$(mktemp -d "${TMPDIR:-/tmp}/bunny-kanidm-validate.XXXXXX")
+  chain_path="${tmp_dir}/nested/chain.pem"
+  key_path="${tmp_dir}/nested/key.pem"
+  chain_value='-----BEGIN CERTIFICATE-----
+dummy-chain
+-----END CERTIFICATE-----
+'
+  key_value='-----BEGIN PRIVATE KEY-----
+dummy-key
+-----END PRIVATE KEY-----
+'
+  chain_b64=$(base64_one_line "$chain_value")
+  key_b64=$(base64_one_line "$key_value")
+  expected_chain_path="${tmp_dir}/expected-chain.pem"
+  expected_key_path="${tmp_dir}/expected-key.pem"
+  printf '%s' "$chain_value" > "$expected_chain_path"
+  printf '%s' "$key_value" > "$expected_key_path"
+  output=$(
+    KANIDM_TLS_CHAIN_PEM_B64="$chain_b64"
+    KANIDM_TLS_KEY_PEM_B64="$key_b64"
+    export KANIDM_TLS_CHAIN_PEM_B64 KANIDM_TLS_KEY_PEM_B64
+    . images/kanidm-bunny/rootfs/usr/local/lib/kanidm-env-files.sh
+    write_env_file "TLS chain file" KANIDM_TLS_CHAIN_PEM KANIDM_TLS_CHAIN_PEM_B64 "$chain_path" 0644
+    write_env_file "TLS key file" KANIDM_TLS_KEY_PEM KANIDM_TLS_KEY_PEM_B64 "$key_path" 0600
+  ) || fail "TLS env file writer failed"
+
+  [ -f "$chain_path" ] || fail "TLS chain file was not created"
+  [ -f "$key_path" ] || fail "TLS key file was not created"
+  cmp -s "$chain_path" "$expected_chain_path" || fail "TLS chain file content did not match"
+  cmp -s "$key_path" "$expected_key_path" || fail "TLS key file content did not match"
+
+  chain_mode=$(stat_mode "$chain_path" || true)
+  key_mode=$(stat_mode "$key_path" || true)
+  if [ -n "$chain_mode" ] && [ "$chain_mode" != 644 ]; then
+    fail "TLS chain file mode is $chain_mode, expected 644"
+  fi
+  if [ -n "$key_mode" ] && [ "$key_mode" != 600 ]; then
+    fail "TLS key file mode is $key_mode, expected 600"
+  fi
+
+  case "$output" in
+    *dummy-chain*|*dummy-key*|*"BEGIN CERTIFICATE"*|*"BEGIN PRIVATE KEY"*|*"$chain_b64"*|*"$key_b64"*)
+      fail "TLS env file writer printed secret material"
+      ;;
+  esac
+
+  if (
+    KANIDM_TLS_CHAIN_PEM="$chain_value"
+    KANIDM_TLS_CHAIN_PEM_B64="$chain_b64"
+    export KANIDM_TLS_CHAIN_PEM KANIDM_TLS_CHAIN_PEM_B64
+    . images/kanidm-bunny/rootfs/usr/local/lib/kanidm-env-files.sh
+    write_env_file "TLS chain file" KANIDM_TLS_CHAIN_PEM KANIDM_TLS_CHAIN_PEM_B64 "$chain_path" 0644
+  ) >/dev/null 2>&1; then
+    fail "TLS env file writer allowed raw and base64 values together"
+  fi
+
+  if (
+    KANIDM_TLS_CHAIN_PEM_B64='not-base64!!'
+    export KANIDM_TLS_CHAIN_PEM_B64
+    . images/kanidm-bunny/rootfs/usr/local/lib/kanidm-env-files.sh
+    write_env_file "TLS chain file" KANIDM_TLS_CHAIN_PEM KANIDM_TLS_CHAIN_PEM_B64 "$chain_path" 0644
+  ) >/dev/null 2>&1; then
+    fail "TLS env file writer accepted invalid base64"
+  fi
+
+  rm -rf "$tmp_dir"
+}
+
 validate_s6_layout() {
   log "Checking s6 service layout"
 
@@ -121,6 +210,7 @@ validate_s6_layout() {
 
   for path in \
     images/kanidm-bunny/rootfs/usr/local/bin/generate-kanidm-config \
+    images/kanidm-bunny/rootfs/usr/local/lib/kanidm-env-files.sh \
     images/kanidm-bunny/rootfs/usr/local/bin/run-kanidm-config \
     images/kanidm-bunny/rootfs/usr/local/bin/run-kanidm-server \
     images/kanidm-bunny/rootfs/usr/local/bin/run-kanidm-ops-api \
@@ -146,6 +236,7 @@ run_shellcheck
 validate_renovate_json
 validate_github_actions_yaml
 run_go_tests
+run_tls_env_file_test
 validate_s6_layout
 
 if [ "$failures" -ne 0 ]; then

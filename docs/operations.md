@@ -16,6 +16,17 @@ Renovate opens PRs for upstream Docker image tags and GitHub Actions. Review the
 
 To publish manually, run the `Build images` workflow with `workflow_dispatch`.
 
+## Certificate Rotation
+
+Use Bunny env vars to rotate the Kanidm public TLS files:
+
+1. Update `KANIDM_TLS_CHAIN_PEM_B64` and `KANIDM_TLS_KEY_PEM_B64` in Bunny with the new base64-encoded `fullchain.pem` and `privkey.pem` values.
+2. Redeploy or restart the app so `kanidm-bunny` rewrites `/data/chain.pem` and `/data/key.pem` before configtest.
+3. Confirm logs show `kanidmd configtest -c /data/server.toml` runs and passes.
+4. Confirm the public Kanidm endpoint works with the new certificate.
+
+Kanidm config comments describe reloading TLS files on `SIGHUP`, but in this Bunny/s6 setup a restart or redeploy is the simple supported path. Treat `KANIDM_TLS_KEY_PEM_B64` as a private-key secret. Leaving the TLS env vars set causes the files to be rewritten on every container start; remove them after rotation only if you want the persisted files to remain untouched on future starts.
+
 ## Logs
 
 Bunny Magic Containers should be operated through Bunny logs, log forwarding, syslog, and the tailnet-only ops API. Do not assume interactive shell access. Treat logs and ops API recovery responses as sensitive because Kanidm can print recovery passwords.
