@@ -18,6 +18,7 @@ Do not reuse or copy Tailscale state volumes across regions. Each region must ke
 
 Containers in the same regional pod share localhost and the network namespace, so ports must not collide. The defaults use:
 
+- Bunny HTTP origin / Caddy listener: `:8080`
 - Kanidm HTTPS: `0.0.0.0:8443`
 - Kanidm replication listener: `127.0.0.1:8444`
 - Kanidm ops API: `127.0.0.1:9080`
@@ -40,6 +41,24 @@ KANIDM_REPL_ORIGIN
 For region `SG`, `KANIDM_REPL_ORIGIN_SG` wins, then `KANIDM_REPL_ORIGIN_sg`, then `KANIDM_REPL_ORIGIN`. The scripts log which variable name was selected. Secret values are not printed.
 
 Keep `KANIDM_DOMAIN` and `KANIDM_ORIGIN` global and public-facing, for example `idm.svee.eu` and `https://idm.svee.eu`.
+
+## Bunny HTTP Origin Proxy
+
+The `kanidm-bunny` image runs Caddy under s6 as a local reverse proxy. Bunny CDN should connect to the container over plain HTTP on the Caddy listener, default `:8080`, with Origin SSL off. Caddy then proxies to Kanidm over local HTTPS at `https://127.0.0.1:8443`.
+
+Default Caddy env vars:
+
+```sh
+CADDY_ENABLED=true
+CADDY_LISTEN=:8080
+CADDY_PUBLIC_HOST=idm.svee.eu
+CADDY_UPSTREAM=https://127.0.0.1:8443
+CADDY_HEALTH_PATH=/healthz
+CADDY_HEALTH_RESPONSE=ok
+CADDY_TLS_INSECURE_SKIP_VERIFY=true
+```
+
+Use Bunny monitoring with HTTP GET against `/healthz` on port `8080`. `CADDY_TLS_INSECURE_SKIP_VERIFY=true` applies only to the local Caddy-to-Kanidm upstream TLS connection, which may use the self-signed Kanidm certificate. Public browser TLS still terminates at Bunny.
 
 ## TLS Certificate Bootstrap
 
@@ -64,7 +83,7 @@ KANIDM_TLS_SELF_SIGNED_CN=idm.svee.eu
 KANIDM_TLS_SELF_SIGNED_SAN=idm.svee.eu
 ```
 
-If Bunny endpoint origin SSL validation rejects self-signed origin certificates, provide a publicly trusted origin certificate through env vars or configure Bunny origin validation appropriately. Manual TLS env provisioning overrides self-signed generation:
+Bunny should not validate Kanidm's internal origin certificate directly when it targets the Caddy HTTP listener with Origin SSL off. Manual TLS env provisioning overrides self-signed generation for the local Caddy-to-Kanidm HTTPS leg:
 
 ```sh
 KANIDM_TLS_CHAIN_PEM_B64=<base64-fullchain-pem>
@@ -101,6 +120,13 @@ KANIDM_TLS_KEY=/data/key.pem
 KANIDM_TLS_SELF_SIGNED_ENABLED=true
 KANIDM_TLS_SELF_SIGNED_CN=idm.svee.eu
 KANIDM_TLS_SELF_SIGNED_SAN=idm.svee.eu
+CADDY_ENABLED=true
+CADDY_LISTEN=:8080
+CADDY_PUBLIC_HOST=idm.svee.eu
+CADDY_UPSTREAM=https://127.0.0.1:8443
+CADDY_HEALTH_PATH=/healthz
+CADDY_HEALTH_RESPONSE=ok
+CADDY_TLS_INSECURE_SKIP_VERIFY=true
 KANIDM_REPL_ENABLED=true
 KANIDM_REPL_BINDADDRESS=127.0.0.1:8444
 KANIDM_REPL_ORIGIN_AMS=repl://kanidm-ams.nessie-monster.ts.net:8444

@@ -16,14 +16,17 @@ run_sh_syntax() {
   log "Checking shell syntax"
   for script in \
     images/kanidm-bunny/rootfs/usr/local/bin/generate-kanidm-config \
+    images/kanidm-bunny/rootfs/usr/local/bin/generate-caddy-config \
     images/kanidm-bunny/rootfs/usr/local/lib/kanidm-env-files.sh \
     images/kanidm-bunny/rootfs/usr/local/bin/run-kanidm-config \
     images/kanidm-bunny/rootfs/usr/local/bin/run-kanidm-server \
+    images/kanidm-bunny/rootfs/usr/local/bin/run-caddy \
     images/kanidm-bunny/rootfs/usr/local/bin/run-kanidm-ops-api \
     images/kanidm-bunny/rootfs/usr/local/bin/finish-kanidm-server \
     images/kanidm-bunny/rootfs/etc/s6-overlay/s6-rc.d/kanidm-config/up \
     images/kanidm-bunny/rootfs/etc/s6-overlay/s6-rc.d/kanidm-server/run \
     images/kanidm-bunny/rootfs/etc/s6-overlay/s6-rc.d/kanidm-server/finish \
+    images/kanidm-bunny/rootfs/etc/s6-overlay/s6-rc.d/caddy/run \
     images/kanidm-bunny/rootfs/etc/s6-overlay/s6-rc.d/kanidm-ops-api/run \
     images/tailscale-sidecar/entrypoint.sh \
     images/socat-forwarder/entrypoint.sh \
@@ -43,14 +46,17 @@ run_shellcheck() {
   log "Running shellcheck"
   shellcheck \
     images/kanidm-bunny/rootfs/usr/local/bin/generate-kanidm-config \
+    images/kanidm-bunny/rootfs/usr/local/bin/generate-caddy-config \
     images/kanidm-bunny/rootfs/usr/local/lib/kanidm-env-files.sh \
     images/kanidm-bunny/rootfs/usr/local/bin/run-kanidm-config \
     images/kanidm-bunny/rootfs/usr/local/bin/run-kanidm-server \
+    images/kanidm-bunny/rootfs/usr/local/bin/run-caddy \
     images/kanidm-bunny/rootfs/usr/local/bin/run-kanidm-ops-api \
     images/kanidm-bunny/rootfs/usr/local/bin/finish-kanidm-server \
     images/kanidm-bunny/rootfs/etc/s6-overlay/s6-rc.d/kanidm-config/up \
     images/kanidm-bunny/rootfs/etc/s6-overlay/s6-rc.d/kanidm-server/run \
     images/kanidm-bunny/rootfs/etc/s6-overlay/s6-rc.d/kanidm-server/finish \
+    images/kanidm-bunny/rootfs/etc/s6-overlay/s6-rc.d/caddy/run \
     images/kanidm-bunny/rootfs/etc/s6-overlay/s6-rc.d/kanidm-ops-api/run \
     images/tailscale-sidecar/entrypoint.sh \
     images/socat-forwarder/entrypoint.sh \
@@ -319,6 +325,53 @@ run_self_signed_tls_test() {
   rm -rf "$tmp_dir"
 }
 
+run_caddy_config_test() {
+  log "Testing Caddyfile generation"
+
+  tmp_dir=$(mktemp -d "${TMPDIR:-/tmp}/bunny-kanidm-caddy.XXXXXX")
+  caddyfile="${tmp_dir}/Caddyfile"
+
+  CADDY_CONFIG_PATH="$caddyfile" \
+  CADDY_LISTEN=":8080" \
+  CADDY_PUBLIC_HOST="idm.svee.eu" \
+  CADDY_UPSTREAM="https://127.0.0.1:8443" \
+  CADDY_HEALTH_PATH="/healthz" \
+  CADDY_HEALTH_RESPONSE="ok" \
+  CADDY_TLS_INSECURE_SKIP_VERIFY="true" \
+    images/kanidm-bunny/rootfs/usr/local/bin/generate-caddy-config \
+    || fail "Caddyfile generation failed"
+
+  grep -qx '	admin off' "$caddyfile" || fail "Caddyfile does not disable admin API"
+  grep -qx '	auto_https off' "$caddyfile" || fail "Caddyfile does not disable automatic HTTPS"
+  grep -qx ':8080 {' "$caddyfile" || fail "Caddyfile does not listen on :8080"
+  grep -qx '	@health path /healthz' "$caddyfile" || fail "Caddyfile missing health matcher"
+  grep -qx '	respond @health "ok" 200' "$caddyfile" || fail "Caddyfile missing health response"
+  grep -qx '	reverse_proxy https://127.0.0.1:8443 {' "$caddyfile" || fail "Caddyfile missing HTTPS upstream"
+  grep -qx '		header_up Host idm.svee.eu' "$caddyfile" || fail "Caddyfile missing Host header"
+  grep -qx '		header_up X-Forwarded-Proto https' "$caddyfile" || fail "Caddyfile missing X-Forwarded-Proto header"
+  grep -qx '		header_up X-Forwarded-Host idm.svee.eu' "$caddyfile" || fail "Caddyfile missing X-Forwarded-Host header"
+  grep -qx '			tls_server_name idm.svee.eu' "$caddyfile" || fail "Caddyfile missing TLS server name"
+  grep -qx '			tls_insecure_skip_verify' "$caddyfile" || fail "Caddyfile missing TLS skip verify default"
+
+  CADDY_CONFIG_PATH="$caddyfile" \
+  CADDY_TLS_INSECURE_SKIP_VERIFY="false" \
+    images/kanidm-bunny/rootfs/usr/local/bin/generate-caddy-config \
+    || fail "Caddyfile generation failed with TLS verification enabled"
+  if grep -q 'tls_insecure_skip_verify' "$caddyfile"; then
+    fail "Caddyfile included tls_insecure_skip_verify when disabled"
+  fi
+
+  if command -v caddy >/dev/null 2>&1; then
+    log "Validating generated Caddyfile with caddy"
+    caddy validate --config "$caddyfile" --adapter caddyfile \
+      || fail "caddy validate failed for generated Caddyfile"
+  else
+    log "Skipping caddy validate; command not found"
+  fi
+
+  rm -rf "$tmp_dir"
+}
+
 validate_s6_layout() {
   log "Checking s6 service layout"
 
@@ -329,11 +382,15 @@ validate_s6_layout() {
     images/kanidm-bunny/rootfs/etc/s6-overlay/s6-rc.d/kanidm-server/run \
     images/kanidm-bunny/rootfs/etc/s6-overlay/s6-rc.d/kanidm-server/finish \
     images/kanidm-bunny/rootfs/etc/s6-overlay/s6-rc.d/kanidm-server/dependencies.d/kanidm-config \
+    images/kanidm-bunny/rootfs/etc/s6-overlay/s6-rc.d/caddy/type \
+    images/kanidm-bunny/rootfs/etc/s6-overlay/s6-rc.d/caddy/run \
+    images/kanidm-bunny/rootfs/etc/s6-overlay/s6-rc.d/caddy/dependencies.d/kanidm-config \
     images/kanidm-bunny/rootfs/etc/s6-overlay/s6-rc.d/kanidm-ops-api/type \
     images/kanidm-bunny/rootfs/etc/s6-overlay/s6-rc.d/kanidm-ops-api/run \
     images/kanidm-bunny/rootfs/etc/s6-overlay/s6-rc.d/kanidm-ops-api/dependencies.d/kanidm-config \
     images/kanidm-bunny/rootfs/etc/s6-overlay/s6-rc.d/user/contents.d/kanidm-config \
     images/kanidm-bunny/rootfs/etc/s6-overlay/s6-rc.d/user/contents.d/kanidm-server \
+    images/kanidm-bunny/rootfs/etc/s6-overlay/s6-rc.d/user/contents.d/caddy \
     images/kanidm-bunny/rootfs/etc/s6-overlay/s6-rc.d/user/contents.d/kanidm-ops-api
   do
     [ -e "$path" ] || fail "missing s6 file $path"
@@ -341,14 +398,17 @@ validate_s6_layout() {
 
   for path in \
     images/kanidm-bunny/rootfs/usr/local/bin/generate-kanidm-config \
+    images/kanidm-bunny/rootfs/usr/local/bin/generate-caddy-config \
     images/kanidm-bunny/rootfs/usr/local/lib/kanidm-env-files.sh \
     images/kanidm-bunny/rootfs/usr/local/bin/run-kanidm-config \
     images/kanidm-bunny/rootfs/usr/local/bin/run-kanidm-server \
+    images/kanidm-bunny/rootfs/usr/local/bin/run-caddy \
     images/kanidm-bunny/rootfs/usr/local/bin/run-kanidm-ops-api \
     images/kanidm-bunny/rootfs/usr/local/bin/finish-kanidm-server \
     images/kanidm-bunny/rootfs/etc/s6-overlay/s6-rc.d/kanidm-config/up \
     images/kanidm-bunny/rootfs/etc/s6-overlay/s6-rc.d/kanidm-server/run \
     images/kanidm-bunny/rootfs/etc/s6-overlay/s6-rc.d/kanidm-server/finish \
+    images/kanidm-bunny/rootfs/etc/s6-overlay/s6-rc.d/caddy/run \
     images/kanidm-bunny/rootfs/etc/s6-overlay/s6-rc.d/kanidm-ops-api/run
   do
     [ -x "$path" ] || fail "not executable: $path"
@@ -358,6 +418,8 @@ validate_s6_layout() {
     || fail "kanidm-config must be oneshot"
   grep -qx 'longrun' images/kanidm-bunny/rootfs/etc/s6-overlay/s6-rc.d/kanidm-server/type \
     || fail "kanidm-server must be longrun"
+  grep -qx 'longrun' images/kanidm-bunny/rootfs/etc/s6-overlay/s6-rc.d/caddy/type \
+    || fail "caddy must be longrun"
   grep -qx 'longrun' images/kanidm-bunny/rootfs/etc/s6-overlay/s6-rc.d/kanidm-ops-api/type \
     || fail "kanidm-ops-api must be longrun"
 }
@@ -369,6 +431,7 @@ validate_github_actions_yaml
 run_go_tests
 run_tls_env_file_test
 run_self_signed_tls_test
+run_caddy_config_test
 validate_s6_layout
 
 if [ "$failures" -ne 0 ]; then

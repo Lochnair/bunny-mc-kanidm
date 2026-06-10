@@ -1,0 +1,30 @@
+#!/bin/sh
+set -eu
+
+: "${CADDY_ENABLED:=true}"
+: "${CADDY_LISTEN:=:8080}"
+: "${CADDY_UPSTREAM:=https://127.0.0.1:8443}"
+: "${CADDY_CONFIG_PATH:=/run/caddy/Caddyfile}"
+
+export LD_LIBRARY_PATH="${LD_LIBRARY_PATH:-/lib}"
+export PATH="${PATH:-/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin}"
+
+is_true() {
+  case "${1:-}" in
+    true|TRUE|1|yes|YES|on|ON) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+if ! is_true "$CADDY_ENABLED"; then
+  printf '[caddy] CADDY_ENABLED=false; Caddy service disabled\n'
+  while :; do
+    sleep 3600
+  done
+fi
+
+printf '[caddy] Generating %s\n' "$CADDY_CONFIG_PATH"
+/usr/local/bin/generate-caddy-config
+
+printf '[caddy] Starting HTTP listener %s proxying to %s\n' "$CADDY_LISTEN" "$CADDY_UPSTREAM"
+exec caddy run --config "$CADDY_CONFIG_PATH" --adapter caddyfile

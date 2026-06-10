@@ -4,13 +4,13 @@ Production-oriented container images for running Kanidm on Bunny.net Magic Conta
 
 This repository builds three linux/amd64 images that are intended to run together in one Bunny Magic Containers app with multiple regions, for example AMS and SG:
 
-- `kanidm-bunny`: s6-overlay supervised Kanidm server that generates `/data/server.toml`, runs configtest before startup, and exposes a localhost-only ops API on `127.0.0.1:9080`.
+- `kanidm-bunny`: s6-overlay supervised Kanidm server that generates `/data/server.toml`, runs configtest before startup, runs Caddy as a local HTTP-to-HTTPS reverse proxy, and exposes a localhost-only ops API on `127.0.0.1:9080`.
 - `tailscale-sidecar`: Tailscale userspace sidecar with SOCKS5 and `tailscale serve` for replication traffic.
 - `socat-forwarder`: Local TCP listener that forwards Kanidm replication through the Tailscale SOCKS5 proxy.
 
 ## Architecture
 
-Public HTTPS/OIDC traffic uses the Bunny HTTP endpoint to reach Kanidm on `0.0.0.0:8443`.
+Public HTTPS/OIDC traffic terminates at Bunny CDN, then Bunny uses plain HTTP to reach the Caddy listener on `:8080`. Caddy proxies locally to Kanidm over HTTPS at `https://127.0.0.1:8443`; Kanidm still runs HTTPS internally.
 
 Replication does not depend on Bunny Anycast IPs. It uses Tailscale userspace networking and a local socat hop:
 
@@ -61,7 +61,7 @@ KANIDM_TLS_SELF_SIGNED_CN=idm.svee.eu
 KANIDM_TLS_SELF_SIGNED_SAN=idm.svee.eu
 ```
 
-If Bunny endpoint origin SSL validation rejects self-signed origin certificates, provide a publicly trusted origin certificate instead or configure Bunny origin validation appropriately. Manual TLS env provisioning remains supported and overrides self-signed generation:
+Bunny should target the Caddy HTTP listener with Origin SSL off. Manual TLS env provisioning remains supported for the internal Caddy-to-Kanidm HTTPS leg and overrides self-signed generation:
 
 ```sh
 KANIDM_TLS_CHAIN_PEM_B64=<base64-fullchain-pem>

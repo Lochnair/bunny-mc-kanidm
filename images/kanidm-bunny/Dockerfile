@@ -33,12 +33,15 @@ COPY cert-helper/go.mod ./
 COPY cert-helper/main.go ./
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o /out/kanidm-cert-helper .
 
+FROM caddy:alpine AS caddy
+
 FROM kanidm/server:1.10.3
 
 COPY --from=busybox:1.37.0-musl /bin/busybox /bin/busybox
 SHELL ["/bin/busybox", "sh", "-c"]
 
 COPY --from=s6-overlay /s6-root /
+COPY --from=caddy /usr/bin/caddy /usr/local/bin/caddy
 COPY --from=ops-api /out/kanidm-ops-api /usr/local/bin/kanidm-ops-api
 COPY --from=cert-helper /out/kanidm-cert-helper /usr/local/bin/kanidm-cert-helper
 COPY rootfs/ /
@@ -49,16 +52,20 @@ RUN /bin/busybox --install -s /bin && \
     ln -s /run /var/run && \
     chmod +x \
       /usr/local/bin/generate-kanidm-config \
+      /usr/local/bin/generate-caddy-config \
       /usr/local/lib/kanidm-env-files.sh \
       /usr/local/bin/run-kanidm-config \
       /usr/local/bin/run-kanidm-server \
+      /usr/local/bin/run-caddy \
       /usr/local/bin/run-kanidm-ops-api \
       /usr/local/bin/finish-kanidm-server \
+      /usr/local/bin/caddy \
       /usr/local/bin/kanidm-ops-api \
       /usr/local/bin/kanidm-cert-helper \
       /etc/s6-overlay/s6-rc.d/kanidm-config/up \
       /etc/s6-overlay/s6-rc.d/kanidm-server/run \
       /etc/s6-overlay/s6-rc.d/kanidm-server/finish \
+      /etc/s6-overlay/s6-rc.d/caddy/run \
       /etc/s6-overlay/s6-rc.d/kanidm-ops-api/run
 
 VOLUME ["/data"]
