@@ -66,6 +66,7 @@ REGION="$(printf '%s' "$REGION_RAW" | tr '[:upper:]' '[:lower:]')"
 : "${TS_SOCKET_WAIT_SECONDS:=30}"
 : "${TS_SOCKS_WAIT_SECONDS:=30}"
 : "${TS_EXTRA_ARGS:=--accept-dns=true}"
+: "${TS_FORCE_REAUTH:=false}"
 : "${TS_HOSTNAME:=kanidm-${REGION}}"
 : "${TS_SERVE_PORT:=8444}"
 : "${TS_SERVE_TARGET:=127.0.0.1:8444}"
@@ -97,6 +98,7 @@ log "serve_replication=${TS_SERVE_PORT:-disabled} -> ${TS_SERVE_TARGET:-disabled
 log "serve_ops=${TS_OPS_SERVE_PORT:-disabled} -> ${TS_OPS_SERVE_TARGET:-disabled}"
 log "serve_ldaps=${TS_LDAP_SERVE_PORT:-disabled} -> ${TS_LDAP_SERVE_TARGET:-disabled}"
 log "authkey=$(redact_state "${TS_AUTHKEY:-}")"
+log "force_reauth=${TS_FORCE_REAUTH}"
 log "extra_args=${TS_EXTRA_ARGS}"
 
 mkdir -p "$TS_STATE_DIR"
@@ -120,20 +122,28 @@ trap cleanup INT TERM
 
 wait_for_socket "$TS_SOCKET" "$TS_SOCKET_WAIT_SECONDS"
 
-log "Trying tailscale up with persisted state"
-# shellcheck disable=SC2086
-if tailscale --socket="$TS_SOCKET" up --hostname="$TS_HOSTNAME" $TS_EXTRA_ARGS; then
-  log "Tailscale up succeeded without TS_AUTHKEY"
+if [ "$TS_FORCE_REAUTH" = "true" ]; then
+  [ -n "${TS_AUTHKEY:-}" ] || die "TS_FORCE_REAUTH=true but TS_AUTHKEY is unset"
+  log "Running tailscale up with TS_AUTHKEY and force reauth"
+  # shellcheck disable=SC2086
+  tailscale --socket="$TS_SOCKET" up --auth-key="$TS_AUTHKEY" --force-reauth --hostname="$TS_HOSTNAME" $TS_EXTRA_ARGS || {
+    tailscale --socket="$TS_SOCKET" status || true
+    die "tailscale up failed with TS_AUTHKEY force reauth path"
+  }
 elif [ -n "${TS_AUTHKEY:-}" ]; then
-  log "Persisted-state tailscale up failed; retrying with TS_AUTHKEY"
+  log "Running tailscale up with TS_AUTHKEY"
   # shellcheck disable=SC2086
   tailscale --socket="$TS_SOCKET" up --auth-key="$TS_AUTHKEY" --hostname="$TS_HOSTNAME" $TS_EXTRA_ARGS || {
     tailscale --socket="$TS_SOCKET" status || true
-    die "tailscale up failed with persisted state and TS_AUTHKEY"
+    die "tailscale up failed with TS_AUTHKEY path"
   }
 else
-  tailscale --socket="$TS_SOCKET" status || true
-  die "tailscale up failed with persisted state and TS_AUTHKEY is unset"
+  log "Running tailscale up with persisted state only"
+  # shellcheck disable=SC2086
+  tailscale --socket="$TS_SOCKET" up --hostname="$TS_HOSTNAME" $TS_EXTRA_ARGS || {
+    tailscale --socket="$TS_SOCKET" status || true
+    die "tailscale up failed with persisted-state-only path"
+  }
 fi
 
 log "Waiting for Tailscale running state"
