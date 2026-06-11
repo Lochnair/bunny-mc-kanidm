@@ -3,6 +3,7 @@ set -eu
 
 CONFIG_PATH="${CONFIG_PATH:-/data/server.toml}"
 PEER_CERT_PATH="${PEER_CERT_PATH:-/data/replication-peer-cert.pem}"
+HOSTS_FILE="${HOSTS_FILE:-/etc/hosts}"
 
 # shellcheck source=images/kanidm-bunny/rootfs/usr/local/lib/kanidm-env-files.sh
 . "${KANIDM_ENV_FILES_LIB:-/usr/local/lib/kanidm-env-files.sh}"
@@ -58,6 +59,59 @@ resolve_env() {
 
 toml_escape() {
   printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'
+}
+
+validate_hosts_value() {
+  name="$1"
+  value="$2"
+
+  case "$value" in
+    *[!A-Za-z0-9._:-]*|'')
+      die "$name contains unsupported characters for /etc/hosts"
+      ;;
+  esac
+}
+
+apply_peer_host_alias() {
+  alias="$1"
+  alias_ip="$2"
+
+  [ -n "$alias" ] || return 0
+
+  validate_hosts_value KANIDM_REPL_PEER_HOST_ALIAS "$alias"
+  validate_hosts_value KANIDM_REPL_PEER_HOST_ALIAS_IP "$alias_ip"
+
+  hosts_dir=$(dirname "$HOSTS_FILE")
+  tmp_hosts=$(mktemp "${hosts_dir}/.bunny-kanidm-hosts.XXXXXX") \
+    || die "Failed to create temporary hosts file beside $HOSTS_FILE"
+  cleanup_hosts_tmp() {
+    rm -f "$tmp_hosts"
+  }
+  trap cleanup_hosts_tmp EXIT HUP INT TERM
+
+  if [ -f "$HOSTS_FILE" ]; then
+    awk '
+      $0 == "# bunny-kanidm managed peer alias begin" { skip = 1; next }
+      $0 == "# bunny-kanidm managed peer alias end" { skip = 0; next }
+      skip != 1 { print }
+    ' "$HOSTS_FILE" > "$tmp_hosts" || die "Failed to render unmanaged hosts entries from $HOSTS_FILE"
+  else
+    : > "$tmp_hosts" || die "Failed to initialise temporary hosts file"
+  fi
+
+  {
+    printf '# bunny-kanidm managed peer alias begin\n'
+    printf '%s %s\n' "$alias_ip" "$alias"
+    printf '# bunny-kanidm managed peer alias end\n'
+  } >> "$tmp_hosts" || die "Failed to render managed peer host alias"
+
+  if ! cat "$tmp_hosts" > "$HOSTS_FILE"; then
+    die "Failed to update $HOSTS_FILE with Kanidm replication peer host alias"
+  fi
+
+  rm -f "$tmp_hosts"
+  trap - EXIT HUP INT TERM
+  log "replication peer host alias: ${alias_ip} ${alias}"
 }
 
 tls_env_material_is_set() {
@@ -178,6 +232,7 @@ provision_self_signed_tls_if_needed() {
 : "${KANIDM_HTTP_CLIENT_ADDRESS_INFO_TRUSTED:=}"
 : "${KANIDM_LDAP_CLIENT_ADDRESS_INFO_MODE:=}"
 : "${KANIDM_LDAP_CLIENT_ADDRESS_INFO_TRUSTED:=}"
+: "${KANIDM_REPL_PEER_HOST_ALIAS_IP:=127.0.0.1}"
 
 REGION_RAW="${BUNNYNET_MC_REGION:-unknown}"
 REGION_LOWER="$(printf '%s' "$REGION_RAW" | tr '[:upper:]' '[:lower:]')"
@@ -193,6 +248,10 @@ resolve_env KANIDM_REPL_BINDADDRESS "127.0.0.1:8444"
 KANIDM_REPL_BINDADDRESS="$RESOLVED_VALUE"
 resolve_env KANIDM_REPL_PEER_URL ""
 KANIDM_REPL_PEER_URL="$RESOLVED_VALUE"
+resolve_env KANIDM_REPL_PEER_HOST_ALIAS ""
+KANIDM_REPL_PEER_HOST_ALIAS="$RESOLVED_VALUE"
+resolve_env KANIDM_REPL_PEER_HOST_ALIAS_IP "$KANIDM_REPL_PEER_HOST_ALIAS_IP"
+KANIDM_REPL_PEER_HOST_ALIAS_IP="$RESOLVED_VALUE"
 resolve_env KANIDM_REPL_PEER_CERT "" true
 KANIDM_REPL_PEER_CERT="$RESOLVED_VALUE"
 resolve_env KANIDM_REPL_PEER_CERT_B64 "" true
@@ -230,6 +289,8 @@ if [ "$tls_env_material_present" != true ]; then
   esac
   positive_integer "$KANIDM_TLS_SELF_SIGNED_RSA_BITS" || die "KANIDM_TLS_SELF_SIGNED_RSA_BITS must be a positive integer"
 fi
+
+apply_peer_host_alias "$KANIDM_REPL_PEER_HOST_ALIAS" "$KANIDM_REPL_PEER_HOST_ALIAS_IP"
 
 write_env_file "TLS chain file" KANIDM_TLS_CHAIN_PEM KANIDM_TLS_CHAIN_PEM_B64 "$KANIDM_TLS_CHAIN" 0644
 write_env_file "TLS key file" KANIDM_TLS_KEY_PEM KANIDM_TLS_KEY_PEM_B64 "$KANIDM_TLS_KEY" 0600

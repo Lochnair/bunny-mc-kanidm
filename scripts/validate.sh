@@ -213,6 +213,98 @@ dummy-key
   rm -rf "$tmp_dir"
 }
 
+run_peer_host_alias_test() {
+  log "Testing replication peer host alias rendering"
+
+  tmp_dir=$(mktemp -d "${TMPDIR:-/tmp}/bunny-kanidm-peer-alias.XXXXXX")
+  generator="images/kanidm-bunny/rootfs/usr/local/bin/generate-kanidm-config"
+  env_lib="images/kanidm-bunny/rootfs/usr/local/lib/kanidm-env-files.sh"
+  config_path="${tmp_dir}/server.toml"
+  hosts_file="${tmp_dir}/hosts"
+  chain_path="${tmp_dir}/tls/chain.pem"
+  key_path="${tmp_dir}/tls/key.pem"
+  backup_path="${tmp_dir}/backups"
+  chain_value='-----BEGIN CERTIFICATE-----
+dummy-chain
+-----END CERTIFICATE-----
+'
+  key_value='-----BEGIN PRIVATE KEY-----
+dummy-key
+-----END PRIVATE KEY-----
+'
+
+  cat > "$hosts_file" <<'EOF'
+127.0.0.1 localhost
+# bunny-kanidm managed peer alias begin
+127.0.0.1 old-peer.example.test
+# bunny-kanidm managed peer alias end
+10.0.0.5 preserved.example.test
+EOF
+
+  for _ in 1 2; do
+    CONFIG_PATH="$config_path" \
+    HOSTS_FILE="$hosts_file" \
+    KANIDM_ENV_FILES_LIB="$env_lib" \
+    BUNNYNET_MC_REGION="ams" \
+    KANIDM_DOMAIN="idm.svee.eu" \
+    KANIDM_ORIGIN="https://idm.svee.eu" \
+    KANIDM_DB_PATH="${tmp_dir}/kanidm.db" \
+    KANIDM_TLS_CHAIN="$chain_path" \
+    KANIDM_TLS_KEY="$key_path" \
+    KANIDM_TLS_CHAIN_PEM="$chain_value" \
+    KANIDM_TLS_KEY_PEM="$key_value" \
+    KANIDM_ONLINE_BACKUP_PATH="$backup_path" \
+    KANIDM_REPL_ENABLED="true" \
+    KANIDM_REPL_ORIGIN_AMS="repl://kanidm-ams.nessie-monster.ts.net:8444" \
+    KANIDM_REPL_PEER_URL_AMS="repl://kanidm-sg.nessie-monster.ts.net:18444" \
+    KANIDM_REPL_PEER_CERT="dummy-partner-cert" \
+    KANIDM_REPL_PEER_HOST_ALIAS_AMS="kanidm-sg.nessie-monster.ts.net" \
+    KANIDM_REPL_PEER_HOST_ALIAS_SG="kanidm-ams.nessie-monster.ts.net" \
+      "$generator" >/dev/null || fail "peer host alias generation failed"
+  done
+
+  begin_count=$(grep -c '^# bunny-kanidm managed peer alias begin$' "$hosts_file" || true)
+  end_count=$(grep -c '^# bunny-kanidm managed peer alias end$' "$hosts_file" || true)
+  [ "$begin_count" -eq 1 ] || fail "managed peer alias begin marker count is $begin_count, expected 1"
+  [ "$end_count" -eq 1 ] || fail "managed peer alias end marker count is $end_count, expected 1"
+  grep -qx '127.0.0.1 kanidm-sg.nessie-monster.ts.net' "$hosts_file" \
+    || fail "AMS peer host alias was not rendered"
+  if grep -q 'old-peer.example.test' "$hosts_file"; then
+    fail "old managed peer host alias was not replaced"
+  fi
+  grep -qx '10.0.0.5 preserved.example.test' "$hosts_file" \
+    || fail "unmanaged hosts entry was not preserved"
+  grep -Fqx '[replication."repl://kanidm-sg.nessie-monster.ts.net:18444"]' "$config_path" \
+    || fail "region-specific AMS peer URL was not rendered"
+
+  sg_hosts_file="${tmp_dir}/hosts-sg"
+  printf '127.0.0.1 localhost\n' > "$sg_hosts_file"
+  CONFIG_PATH="$config_path" \
+  HOSTS_FILE="$sg_hosts_file" \
+  KANIDM_ENV_FILES_LIB="$env_lib" \
+  BUNNYNET_MC_REGION="sg" \
+  KANIDM_DOMAIN="idm.svee.eu" \
+  KANIDM_ORIGIN="https://idm.svee.eu" \
+  KANIDM_DB_PATH="${tmp_dir}/kanidm.db" \
+  KANIDM_TLS_CHAIN="$chain_path" \
+  KANIDM_TLS_KEY="$key_path" \
+  KANIDM_TLS_CHAIN_PEM="$chain_value" \
+  KANIDM_TLS_KEY_PEM="$key_value" \
+  KANIDM_ONLINE_BACKUP_PATH="$backup_path" \
+  KANIDM_REPL_ENABLED="true" \
+  KANIDM_REPL_ORIGIN_SG="repl://kanidm-sg.nessie-monster.ts.net:8444" \
+  KANIDM_REPL_PEER_URL_SG="repl://kanidm-ams.nessie-monster.ts.net:18444" \
+  KANIDM_REPL_PEER_CERT="dummy-partner-cert" \
+  KANIDM_REPL_PEER_HOST_ALIAS_AMS="kanidm-sg.nessie-monster.ts.net" \
+  KANIDM_REPL_PEER_HOST_ALIAS_SG="kanidm-ams.nessie-monster.ts.net" \
+  KANIDM_REPL_PEER_HOST_ALIAS_IP_SG="127.0.0.2" \
+    "$generator" >/dev/null || fail "SG peer host alias generation failed"
+  grep -qx '127.0.0.2 kanidm-ams.nessie-monster.ts.net' "$sg_hosts_file" \
+    || fail "region-specific SG peer host alias/IP was not rendered"
+
+  rm -rf "$tmp_dir"
+}
+
 run_self_signed_tls_test() {
   helper_path=$(cert_helper_binary || true)
   if [ -z "$helper_path" ]; then
@@ -430,6 +522,7 @@ validate_renovate_json
 validate_github_actions_yaml
 run_go_tests
 run_tls_env_file_test
+run_peer_host_alias_test
 run_self_signed_tls_test
 run_caddy_config_test
 validate_s6_layout

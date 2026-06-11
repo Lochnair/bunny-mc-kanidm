@@ -15,8 +15,10 @@ Public HTTPS/OIDC traffic terminates at Bunny CDN, then Bunny uses plain HTTP to
 Replication does not depend on Bunny Anycast IPs. It uses Tailscale userspace networking and a local socat hop:
 
 ```text
-Kanidm -> localhost:18444 -> socat -> Tailscale SOCKS5 127.0.0.1:1055 -> peer MagicDNS:8444 -> tailscale serve --tcp=8444 -> peer localhost:8444
+Kanidm -> peer replication hostname:18444 -> Kanidm-container hosts alias 127.0.0.1 -> socat -> Tailscale SOCKS5 127.0.0.1:1055 -> peer MagicDNS:8444 -> tailscale serve --tcp=8444 -> peer localhost:8444
 ```
+
+Kanidm validates the replication certificate against the hostname in `KANIDM_REPL_PEER_URL`, so peer URLs use the peer's real replication hostname, for example `repl://kanidm-sg.nessie-monster.ts.net:18444`. `kanidm-bunny` maps that hostname to `127.0.0.1` only inside the Kanidm container with `KANIDM_REPL_PEER_HOST_ALIAS_<REGION>`, while `socat-forwarder` still resolves the real MagicDNS hostname through `FORWARD_TARGET_HOST_<REGION>`.
 
 Optional LDAPS can later be exposed privately with `tailscale serve` to `127.0.0.1:3636`. Public LDAPS would require raw TCP exposure unless clients are on Tailscale or behind another TCP proxy.
 

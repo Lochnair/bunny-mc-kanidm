@@ -131,8 +131,11 @@ KANIDM_REPL_ENABLED=true
 KANIDM_REPL_BINDADDRESS=127.0.0.1:8444
 KANIDM_REPL_ORIGIN_AMS=repl://kanidm-ams.nessie-monster.ts.net:8444
 KANIDM_REPL_ORIGIN_SG=repl://kanidm-sg.nessie-monster.ts.net:8444
-KANIDM_REPL_PEER_URL_AMS=repl://127.0.0.1:18444
-KANIDM_REPL_PEER_URL_SG=repl://127.0.0.1:18444
+KANIDM_REPL_PEER_URL_AMS=repl://kanidm-sg.nessie-monster.ts.net:18444
+KANIDM_REPL_PEER_URL_SG=repl://kanidm-ams.nessie-monster.ts.net:18444
+KANIDM_REPL_PEER_HOST_ALIAS_AMS=kanidm-sg.nessie-monster.ts.net
+KANIDM_REPL_PEER_HOST_ALIAS_SG=kanidm-ams.nessie-monster.ts.net
+KANIDM_REPL_PEER_HOST_ALIAS_IP=127.0.0.1
 KANIDM_REPL_PEER_CERT_B64_AMS=<base64-of-sg-replication-cert-value>
 KANIDM_REPL_PEER_CERT_B64_SG=<base64-of-ams-replication-cert-value>
 KANIDM_REPL_AUTOMATIC_REFRESH_SG=true
@@ -153,7 +156,11 @@ FORWARD_LISTEN_HOST=127.0.0.1
 FORWARD_LISTEN_PORT=18444
 ```
 
-During first bootstrap, omit `KANIDM_REPL_PEER_URL_AMS`, `KANIDM_REPL_PEER_URL_SG`, `KANIDM_REPL_PEER_CERT_B64_AMS`, and `KANIDM_REPL_PEER_CERT_B64_SG`. Replication can be enabled with no peer stanza so each region can start and generate its own replication certificate.
+Kanidm validates the peer replication certificate against the hostname in `KANIDM_REPL_PEER_URL_<REGION>`. The peer URL must therefore use the peer's real replication hostname, not `127.0.0.1`.
+
+`KANIDM_REPL_PEER_HOST_ALIAS_<REGION>` maps that peer hostname to `127.0.0.1` only inside the Kanidm container before configtest, so Kanidm still connects to the local socat listener on port `18444`. `socat-forwarder` is separate: it resolves the real peer MagicDNS hostname from `FORWARD_TARGET_HOST_AMS` or `FORWARD_TARGET_HOST_SG` and forwards to the peer replication port through the Tailscale SOCKS5 proxy.
+
+During first bootstrap, omit `KANIDM_REPL_PEER_URL_AMS`, `KANIDM_REPL_PEER_URL_SG`, `KANIDM_REPL_PEER_CERT_B64_AMS`, and `KANIDM_REPL_PEER_CERT_B64_SG`. Replication can be enabled with no peer stanza so each region can start and generate its own replication certificate. The host alias variables can be present during bootstrap; they are only required once the peer URLs are added.
 
 Only set `KANIDM_REPL_AUTOMATIC_REFRESH_SG=true` on the SG secondary side. Leave the AMS primary without an automatic refresh variable; the generator only writes `automatic_refresh = true` when the resolved value is true.
 
@@ -178,7 +185,7 @@ KANIDM_TLS_KEY_PEM_B64=<base64-private-key-pem>
 
 1. Deploy one app with AMS and SG, `KANIDM_REPL_ENABLED=true`, and region-specific `KANIDM_REPL_ORIGIN_AMS` and `KANIDM_REPL_ORIGIN_SG`. Do not set peer URLs or peer certificates yet.
 2. Use the ops API over Tailscale to fetch both replication certificates.
-3. Add `KANIDM_REPL_PEER_CERT_B64_AMS` with the SG certificate, `KANIDM_REPL_PEER_CERT_B64_SG` with the AMS certificate, and the region-specific peer URLs.
+3. Add `KANIDM_REPL_PEER_CERT_B64_AMS` with the SG certificate, `KANIDM_REPL_PEER_CERT_B64_SG` with the AMS certificate, the region-specific peer URLs, and the matching `KANIDM_REPL_PEER_HOST_ALIAS_<REGION>` values.
 4. Set `KANIDM_REPL_AUTOMATIC_REFRESH_SG=true` only for SG.
 5. Redeploy or restart the app.
 6. Trigger `refresh-consumer` on SG through the ops API only if automatic refresh does not pull from AMS.
@@ -196,17 +203,21 @@ Do not configure Bunny public HTTP/CDN endpoints for the ops API port. Mutating 
 
 ## Replication Peer URL Validation
 
-The main remaining runtime validation point is `KANIDM_REPL_PEER_URL_<REGION>=repl://127.0.0.1:18444`.
+Kanidm uses the peer URL hostname for TLS name validation. A peer URL such as `repl://127.0.0.1:18444` fails when the peer replication certificate is issued for `kanidm-ams.nessie-monster.ts.net` or `kanidm-sg.nessie-monster.ts.net`.
 
-Kanidm documentation describes replication peer stanzas as using the partner node origin, for example `repl://origin_of_A:port`. This Bunny design inserts a local socat forwarder between Kanidm and the remote node, so the peer URL currently points at the local listener `repl://127.0.0.1:18444`.
-
-This may work because `partner_cert` validates the remote node reached through the forwarder, but it still needs real Kanidm replication testing. If Kanidm requires the peer URL to match the partner origin, use a loopback alias and local hosts override instead:
+Use the peer's certificate hostname in the Kanidm replication stanza:
 
 ```text
-local Kanidm replication binds 127.0.0.1:8444
-socat binds 127.0.0.2:8444
-kanidm-ams.nessie-monster.ts.net resolves to 127.0.0.2 inside the Kanidm container
-peer URL remains repl://kanidm-ams.nessie-monster.ts.net:8444
+AMS peer URL -> repl://kanidm-sg.nessie-monster.ts.net:18444
+SG peer URL  -> repl://kanidm-ams.nessie-monster.ts.net:18444
 ```
 
-Do not switch to this fallback until the local forwarder URL is proven incompatible.
+Then use `KANIDM_REPL_PEER_HOST_ALIAS_<REGION>` to write a managed hosts entry inside the Kanidm container:
+
+```text
+# bunny-kanidm managed peer alias begin
+127.0.0.1 kanidm-sg.nessie-monster.ts.net
+# bunny-kanidm managed peer alias end
+```
+
+This hosts override is deliberately local to the Kanidm container. Do not point `FORWARD_TARGET_HOST_<REGION>` at `127.0.0.1`; the socat container must continue resolving and connecting to the real peer MagicDNS hostname.

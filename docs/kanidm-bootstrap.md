@@ -63,12 +63,19 @@ curl http://kanidm-sg.nessie-monster.ts.net:9080/replication/certificate
 Add the peer URLs and peer certificates at the app level:
 
 ```sh
-KANIDM_REPL_PEER_URL_AMS=repl://127.0.0.1:18444
-KANIDM_REPL_PEER_URL_SG=repl://127.0.0.1:18444
+KANIDM_REPL_PEER_URL_AMS=repl://kanidm-sg.nessie-monster.ts.net:18444
+KANIDM_REPL_PEER_URL_SG=repl://kanidm-ams.nessie-monster.ts.net:18444
+KANIDM_REPL_PEER_HOST_ALIAS_AMS=kanidm-sg.nessie-monster.ts.net
+KANIDM_REPL_PEER_HOST_ALIAS_SG=kanidm-ams.nessie-monster.ts.net
+KANIDM_REPL_PEER_HOST_ALIAS_IP=127.0.0.1
 KANIDM_REPL_PEER_CERT_B64_AMS=<base64-of-sg-replication-cert-value>
 KANIDM_REPL_PEER_CERT_B64_SG=<base64-of-ams-replication-cert-value>
 KANIDM_REPL_AUTOMATIC_REFRESH_SG=true
 ```
+
+Kanidm validates the peer replication certificate against the hostname in `KANIDM_REPL_PEER_URL_<REGION>`, so the URL must use the peer's real replication hostname. `KANIDM_REPL_PEER_HOST_ALIAS_<REGION>` maps that hostname to `127.0.0.1` only inside the Kanidm container, causing the connection to reach the local socat listener on port `18444`.
+
+Do not change `FORWARD_TARGET_HOST_AMS` or `FORWARD_TARGET_HOST_SG` to localhost. The socat container still resolves the real peer MagicDNS hostname and forwards to peer `:8444` through Tailscale SOCKS5.
 
 Leave `KANIDM_REPL_AUTOMATIC_REFRESH_AMS` unset on the primary. The config generator only writes `automatic_refresh = true` when the resolved value is true; it omits the key otherwise.
 
@@ -79,8 +86,6 @@ curl -X POST \
   -H "Authorization: Bearer ${OPS_ADMIN_TOKEN}" \
   http://kanidm-sg.nessie-monster.ts.net:9080/replication/refresh-consumer
 ```
-
-The peer URL currently points to the local forwarder: `repl://127.0.0.1:18444`. Kanidm examples describe peer stanzas using the partner node origin, such as `repl://origin_of_A:port`; this local-forwarder URL is the main remaining runtime validation point. It may work because `partner_cert` validates the remote node reached through socat. If Kanidm requires the URL to match the partner origin, the fallback is to bind socat on a loopback alias, for example `127.0.0.2:8444`, resolve `kanidm-ams.nessie-monster.ts.net` locally to `127.0.0.2` inside the Kanidm container, and keep the peer URL as `repl://kanidm-ams.nessie-monster.ts.net:8444`.
 
 ## Account Recovery
 
