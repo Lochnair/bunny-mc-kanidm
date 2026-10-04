@@ -1,4 +1,4 @@
-FROM alpine:3.22 AS s6-overlay
+FROM alpine:3.24 AS s6-overlay
 
 ARG S6_OVERLAY_VERSION=3.2.1.0
 ARG TARGETARCH=amd64
