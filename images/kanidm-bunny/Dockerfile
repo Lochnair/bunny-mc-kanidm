@@ -19,14 +19,14 @@ RUN case "$TARGETARCH" in \
     tar -C /s6-root -Jxpf /tmp/s6-overlay-noarch.tar.xz && \
     tar -C /s6-root -Jxpf /tmp/s6-overlay-arch.tar.xz
 
-FROM golang:1.25.4-alpine3.22 AS ops-api
+FROM golang:1.26.4-alpine3.22 AS ops-api
 
 WORKDIR /src
 COPY ops-api/go.mod ./
 COPY ops-api/main.go ./
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o /out/kanidm-ops-api .
 
-FROM golang:1.25.4-alpine3.22 AS cert-helper
+FROM golang:1.26.4-alpine3.22 AS cert-helper
 
 WORKDIR /src
 COPY cert-helper/go.mod ./
