@@ -37,7 +37,7 @@ FROM caddy:alpine AS caddy
 
 FROM kanidm/server:1.10.3
 
-COPY --from=busybox:1.37.0-musl /bin/busybox /bin/busybox
+COPY --from=busybox:1.38.0-musl /bin/busybox /bin/busybox
 SHELL ["/bin/busybox", "sh", "-c"]
 
 COPY --from=s6-overlay /s6-root /
