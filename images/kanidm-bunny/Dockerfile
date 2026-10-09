@@ -35,7 +35,7 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o
 
 FROM caddy:alpine AS caddy
 
-FROM kanidm/server:1.10.3
+FROM kanidm/server:1.11.2
 
 COPY --from=busybox:1.37.0-musl /bin/busybox /bin/busybox
 SHELL ["/bin/busybox", "sh", "-c"]
