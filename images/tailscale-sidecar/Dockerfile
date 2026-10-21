@@ -1,4 +1,4 @@
-FROM tailscale/tailscale:v1.98.3
+FROM tailscale/tailscale:v1.104.2
 
 COPY entrypoint.sh /usr/local/bin/tailscale-sidecar-entrypoint
 RUN chmod +x /usr/local/bin/tailscale-sidecar-entrypoint
